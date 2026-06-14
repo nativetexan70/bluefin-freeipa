@@ -221,6 +221,32 @@ To trigger a manual update check:
 sudo bootc upgrade
 ```
 
+## Troubleshooting: SELinux Permission Errors During Switch or Upgrade
+
+If `bootc switch` or `bootc upgrade` fails with an error like:
+
+```
+Switching (ostree): Pulling: Importing: Writing merged filesystem to mtree:
+Writing content object: Setting xattrs: fsetxattr(security.selinux): Permission denied
+```
+
+This means the bootc process lacks the `CAP_MAC_ADMIN` Linux capability needed to write SELinux security labels onto files in the new image layer. It is most common when switching between different base images (e.g. Bazzite → bluefin-freeipa) but can also occur on first upgrade to a new major image version.
+
+**Workaround:** Put SELinux into permissive mode for the duration of the switch, then reboot:
+
+```bash
+sudo setenforce 0
+sudo bootc switch ghcr.io/nativetexan70/bluefin-freeipa:latest
+# or: sudo bootc upgrade
+sudo setenforce 1
+systemctl reboot
+```
+
+`setenforce 0` is transient — it only lasts until the next reboot. On first boot into the new image, the deployed image's own SELinux policy activates and the filesystem is automatically relabeled. This is safe because security is restored as soon as the new image boots.
+
+> [!NOTE]
+> If you are switching from a non-bootc system or a completely different distribution, a fresh install from the [installer ISO](#building-disk-images-locally) is the more reliable path.
+
 ---
 
 # Building the Image Locally
