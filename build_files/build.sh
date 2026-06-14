@@ -37,6 +37,22 @@ systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
 
+### Plymouth boot logo — replace Bluefin/bgrt fallback with Universal Blue logo
+#
+# The bgrt theme shows the UEFI firmware logo when one is present; when there
+# is none (VMs, many PCs) it falls back to bgrt-fallback.png. Replacing that
+# file changes what users see on every machine that lacks a firmware logo.
+# The initramfs must be rebuilt so the new PNG is baked into the deployed
+# boot image rather than only existing on the root filesystem.
+
+install -Dm644 /ctx/ublue-logo.png \
+    /usr/share/plymouth/themes/spinner/bgrt-fallback.png
+
+# Rebuild the initramfs so the updated Plymouth assets are included.
+# --no-hostonly avoids hardware-specific probing that fails in a container.
+# --regenerate-all rebuilds for every installed kernel version.
+dracut --no-hostonly --regenerate-all --force
+
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
 # Repos inherited from the Bluefin base image may reference
