@@ -39,7 +39,7 @@ systemctl enable podman.socket
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
-# Repos inherited from the Bazzite base image (e.g. terra-mesa) reference
+# Repos inherited from the Bluefin base image may reference
 # GPG keys via local file:// paths in /etc/pki/rpm-gpg/. BIB's anaconda-iso
 # manifest generation extracts repo configs from the container image and runs
 # dnf dependency resolution inside its own container, which has no access to
@@ -92,7 +92,7 @@ useradd -r -M -d /home/linuxbrew -s /bin/bash linuxbrew
 groupadd -r brew
 usermod -aG brew linuxbrew
 
-# /home is a symlink to /var/home in Bazzite; create the real directory
+# /home is a symlink to /var/home in Bluefin; create the real directory
 # since the symlink target does not exist during the container build.
 mkdir -p /var/home/linuxbrew
 chown linuxbrew:linuxbrew /var/home/linuxbrew

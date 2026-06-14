@@ -3,12 +3,11 @@ FROM scratch AS ctx
 COPY build_files /
 
 # Base Image
-FROM ghcr.io/ublue-os/bazzite-gnome:stable
+FROM ghcr.io/ublue-os/bluefin:stable
 
 ## Other possible base images include:
-# FROM ghcr.io/ublue-os/bazzite-gnome:stable
-# FROM ghcr.io/ublue-os/bazzite:latest          (KDE variant)
-# FROM ghcr.io/ublue-os/bazzite:stable          (KDE variant, stable channel)
+# FROM ghcr.io/ublue-os/bluefin:stable          (GNOME variant)
+# FROM ghcr.io/ublue-os/bluefin-dx:stable       (GNOME developer experience variant)
 #
 # Universal Blue Images: https://github.com/orgs/ublue-os/packages
 
