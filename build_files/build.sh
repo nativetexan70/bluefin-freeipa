@@ -37,24 +37,40 @@ systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
 
-### Plymouth boot logo — Universal Blue logo via spinner theme
+### Universal Blue branding — replace Bluefin logos throughout
 #
-# The default bgrt theme only shows bgrt-fallback.png when no UEFI firmware
-# logo is present in the ACPI BGRT table. On most real hardware the firmware
-# logo takes priority and the fallback is never shown.
+# Bluefin ships logo files in three places that are visible to users:
 #
-# The spinner theme always shows watermark.png regardless of firmware, giving
-# a consistent boot appearance on all machines. We switch to spinner and
-# install the Universal Blue logo as both the watermark and the bgrt fallback.
+#   1. Plymouth boot watermark (/usr/share/plymouth/themes/spinner/watermark.png)
+#   2. GDM login screen logo  (/usr/share/pixmaps/fedora-gdm-logo.png)
+#      and related pixmap files
+#   3. GNOME Shell Logo Menu  (/usr/share/icons/hicolor/scalable/actions/
+#                               ublue-logo-symbolic.svg)
+#
+# The bgrt Plymouth theme only shows bgrt-fallback.png when no UEFI firmware
+# logo is present. Switching to the spinner theme ensures the watermark is
+# always displayed regardless of hardware.
 
+# Plymouth — spinner theme watermark (shown on all hardware)
 install -Dm644 /ctx/ublue-logo.png \
     /usr/share/plymouth/themes/spinner/watermark.png
 install -Dm644 /ctx/ublue-logo.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
-
-# Switch to the spinner theme without triggering a dracut rebuild here
-# (-R would try to rebuild in-place, which fails in a container).
 plymouth-set-default-theme spinner
+
+# GDM login screen and system pixmaps
+install -Dm644 /ctx/ublue-logo-large.png \
+    /usr/share/pixmaps/fedora-gdm-logo.png
+install -Dm644 /ctx/ublue-logo-large.png \
+    /usr/share/pixmaps/system-logo-white.png
+install -Dm644 /ctx/ublue-logo-large.png \
+    /usr/share/pixmaps/fedora-logo.png
+install -Dm644 /ctx/ublue-logo-large.png \
+    /usr/share/pixmaps/fedora-logo-icon.png
+
+# GNOME Shell Logo Menu extension icon
+install -Dm644 /ctx/ublue-logo-symbolic.svg \
+    /usr/share/icons/hicolor/scalable/actions/ublue-logo-symbolic.svg
 
 # Rebuild the initramfs so the updated Plymouth assets and theme selection
 # are baked into the deployed boot image.
