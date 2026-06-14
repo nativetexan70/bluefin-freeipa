@@ -77,6 +77,40 @@ install -Dm644 /ctx/ublue-logo-symbolic.svg \
     /usr/share/icons/hicolor/scalable/actions/ublue-logo-symbolic.svg
 gtk-update-icon-cache --force /usr/share/icons/hicolor
 
+# Logo Menu dconf override — use our SVG as the panel button icon.
+# The Logo Menu extension reads icons from its own bundled Resources/ dir via
+# menu-button-icon-image (integer index). Setting use-custom-icon=true with a
+# custom-icon-path bypasses the index lookup and uses our file directly.
+install -dm755 /etc/dconf/db/distro.d
+cat > /etc/dconf/db/distro.d/06-ublue-logo-menu << 'DCONFEOF'
+[org/gnome/shell/extensions/Logo-menu]
+use-custom-icon=true
+custom-icon-path='/usr/share/icons/hicolor/scalable/actions/ublue-logo-symbolic.svg'
+symbolic-icon=true
+DCONFEOF
+dconf update
+
+# Fastfetch terminal logo — replace Bluefin mascot with UBlue logo.
+# Fastfetch uses bluefin.png as the primary image source on terminal open.
+# The sixel and symbol variants require tooling unavailable at build time;
+# remove them so fastfetch falls back to the PNG without errors.
+install -Dm644 /ctx/ublue-logo.png \
+    /usr/share/ublue-os/bluefin-logos/bluefin.png
+rm -f /usr/share/ublue-os/bluefin-logos/sixels/bluefin
+rm -f /usr/share/ublue-os/bluefin-logos/symbols/bluefin
+
+# Anaconda installer sidebar logo — shown during ISO installs built via BIB.
+# install -D creates the destination directory tree if it does not exist.
+install -Dm644 /ctx/ublue-logo-gdm.png \
+    /usr/share/anaconda/pixmaps/silverblue/sidebar-logo.png
+
+# Bluefin help desktop entry — update name (entry is NoDisplay=true;
+# only visible in default-app pickers for help:// URI schemes).
+if [[ -f /usr/share/applications/bluefin-help.desktop ]]; then
+    sed -i 's/^Name=.*/Name=Universal Blue Help/' \
+        /usr/share/applications/bluefin-help.desktop
+fi
+
 # Rebuild the initramfs so the updated Plymouth assets and theme selection
 # are baked into the deployed boot image.
 # --no-hostonly avoids hardware-specific probing that fails in a container.
