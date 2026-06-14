@@ -37,6 +37,20 @@ systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
 
+### Configure cosign image verification for bootc upgrades
+#
+# Without this, bootc pull shows "ostree-unverified-registry" because it has
+# no policy telling it to verify signatures. Installing the public key and a
+# sigstore policy turns every subsequent "bootc upgrade" into a verified pull
+# against the cosign signature attached to the GHCR image.
+
+install -Dm644 /ctx/cosign.pub \
+    /etc/pki/containers/bluefin-freeipa.pub
+install -Dm644 /ctx/policy.json \
+    /etc/containers/policy.json
+install -Dm644 /ctx/registries.d-nativetexan70.yaml \
+    /etc/containers/registries.d/ghcr.io-nativetexan70.yaml
+
 ### Universal Blue branding — replace Bluefin logos throughout
 #
 # Bluefin ships logo files in three places that are visible to users:
