@@ -37,18 +37,27 @@ systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
 
-### Plymouth boot logo — replace Bluefin/bgrt fallback with Universal Blue logo
+### Plymouth boot logo — Universal Blue logo via spinner theme
 #
-# The bgrt theme shows the UEFI firmware logo when one is present; when there
-# is none (VMs, many PCs) it falls back to bgrt-fallback.png. Replacing that
-# file changes what users see on every machine that lacks a firmware logo.
-# The initramfs must be rebuilt so the new PNG is baked into the deployed
-# boot image rather than only existing on the root filesystem.
+# The default bgrt theme only shows bgrt-fallback.png when no UEFI firmware
+# logo is present in the ACPI BGRT table. On most real hardware the firmware
+# logo takes priority and the fallback is never shown.
+#
+# The spinner theme always shows watermark.png regardless of firmware, giving
+# a consistent boot appearance on all machines. We switch to spinner and
+# install the Universal Blue logo as both the watermark and the bgrt fallback.
 
+install -Dm644 /ctx/ublue-logo.png \
+    /usr/share/plymouth/themes/spinner/watermark.png
 install -Dm644 /ctx/ublue-logo.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
 
-# Rebuild the initramfs so the updated Plymouth assets are included.
+# Switch to the spinner theme without triggering a dracut rebuild here
+# (-R would try to rebuild in-place, which fails in a container).
+plymouth-set-default-theme spinner
+
+# Rebuild the initramfs so the updated Plymouth assets and theme selection
+# are baked into the deployed boot image.
 # --no-hostonly avoids hardware-specific probing that fails in a container.
 # --regenerate-all rebuilds for every installed kernel version.
 dracut --no-hostonly --regenerate-all --force
