@@ -56,21 +56,23 @@ install -Dm644 /ctx/ublue-logo.png \
     /usr/share/plymouth/themes/spinner/watermark.png
 install -Dm644 /ctx/ublue-logo.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
+install -Dm644 /ctx/ublue-logo.png \
+    /usr/share/plymouth/themes/spinner/silverblue-watermark.png
 plymouth-set-default-theme spinner
 
 # GDM login screen and system pixmaps
-install -Dm644 /ctx/ublue-logo-large.png \
-    /usr/share/pixmaps/fedora-gdm-logo.png
-install -Dm644 /ctx/ublue-logo-large.png \
-    /usr/share/pixmaps/system-logo-white.png
-install -Dm644 /ctx/ublue-logo-large.png \
-    /usr/share/pixmaps/fedora-logo.png
-install -Dm644 /ctx/ublue-logo-large.png \
-    /usr/share/pixmaps/fedora-logo-icon.png
+for _pixmap in fedora-gdm-logo.png fedora-logo.png fedora-logo-icon.png \
+               fedora-logo-small.png fedora-logo-sprite.png \
+               fedora_logo_med.png fedora_whitelogo_med.png \
+               system-logo-white.png; do
+    install -Dm644 /ctx/ublue-logo-large.png "/usr/share/pixmaps/${_pixmap}"
+done
+unset _pixmap
 
-# GNOME Shell Logo Menu extension icon
+# GNOME Shell icon (Logo Menu extension + custom-command-list panel button)
 install -Dm644 /ctx/ublue-logo-symbolic.svg \
     /usr/share/icons/hicolor/scalable/actions/ublue-logo-symbolic.svg
+gtk-update-icon-cache --force /usr/share/icons/hicolor
 
 # Rebuild the initramfs so the updated Plymouth assets and theme selection
 # are baked into the deployed boot image.
