@@ -67,8 +67,8 @@ install -Dm644 /ctx/registries.d-nativetexan70.yaml \
 
 # Plymouth — spinner theme watermark (shown on all hardware)
 # Plymouth renders watermark.png at native pixel size. Bluefin's original
-# watermark is 288x43px; our square logo is sized to 100x100 so it fits
-# in the bottom corner without overlapping the spinner or login prompt.
+# watermark is 288x43px; the horizontal wordmark is rendered at 300x76 to
+# match the original scale while showing the icon+text wordmark.
 install -Dm644 /ctx/ublue-logo-watermark.png \
     /usr/share/plymouth/themes/spinner/watermark.png
 install -Dm644 /ctx/ublue-logo-watermark.png \
@@ -77,7 +77,7 @@ install -Dm644 /ctx/ublue-logo-watermark.png \
     /usr/share/plymouth/themes/spinner/silverblue-watermark.png
 plymouth-set-default-theme spinner
 
-# GDM login screen and system pixmaps (200x200 — appropriate for dialogs/GDM)
+# GDM login screen and system pixmaps (400x101 horizontal wordmark)
 for _pixmap in fedora-gdm-logo.png fedora-logo.png fedora-logo-icon.png \
                fedora-logo-small.png fedora-logo-sprite.png \
                fedora_logo_med.png fedora_whitelogo_med.png \
