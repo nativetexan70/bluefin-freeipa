@@ -52,20 +52,23 @@ systemctl enable podman.socket
 # always displayed regardless of hardware.
 
 # Plymouth — spinner theme watermark (shown on all hardware)
-install -Dm644 /ctx/ublue-logo.png \
+# Plymouth renders watermark.png at native pixel size. Bluefin's original
+# watermark is 288x43px; our square logo is sized to 100x100 so it fits
+# in the bottom corner without overlapping the spinner or login prompt.
+install -Dm644 /ctx/ublue-logo-watermark.png \
     /usr/share/plymouth/themes/spinner/watermark.png
-install -Dm644 /ctx/ublue-logo.png \
+install -Dm644 /ctx/ublue-logo-watermark.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
-install -Dm644 /ctx/ublue-logo.png \
+install -Dm644 /ctx/ublue-logo-watermark.png \
     /usr/share/plymouth/themes/spinner/silverblue-watermark.png
 plymouth-set-default-theme spinner
 
-# GDM login screen and system pixmaps
+# GDM login screen and system pixmaps (200x200 — appropriate for dialogs/GDM)
 for _pixmap in fedora-gdm-logo.png fedora-logo.png fedora-logo-icon.png \
                fedora-logo-small.png fedora-logo-sprite.png \
                fedora_logo_med.png fedora_whitelogo_med.png \
                system-logo-white.png; do
-    install -Dm644 /ctx/ublue-logo-large.png "/usr/share/pixmaps/${_pixmap}"
+    install -Dm644 /ctx/ublue-logo-gdm.png "/usr/share/pixmaps/${_pixmap}"
 done
 unset _pixmap
 
