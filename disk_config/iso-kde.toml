@@ -2,6 +2,14 @@
 contents = """
 %post
 bootc switch --mutate-in-place --transport registry ghcr.io/nativetexan70/bluefin-freeipa:latest
+
+# Ensure Flathub is registered as the system Flatpak remote so that
+# system apps shipped by the Bluefin base image are resolvable and
+# background updates work after first login.
+flatpak remote-add --if-not-exists --system flathub https://flathub.org/repo/flathub.flatpakrepo
+
+# Enable background Flatpak update timer for all users.
+systemctl --global enable flatpak-user-update.timer || true
 %end
 """
 
