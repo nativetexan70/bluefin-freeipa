@@ -221,6 +221,38 @@ To trigger a manual update check:
 sudo bootc upgrade
 ```
 
+## Troubleshooting: Unverified Registry Warning
+
+If `bootc upgrade` shows a message like:
+
+```
+Pulling manifest: ostree-unverified-registry:ghcr.io/nativetexan70/bluefin-freeipa:latest
+```
+
+This means the running system does not yet have the cosign signature policy installed. The policy files are baked into this image and take effect automatically on all future upgrades **after** the first one — but the very first upgrade from an older image (or from a switched system) still runs without them.
+
+**One-time fix:** install the policy files manually, then run the upgrade:
+
+```bash
+# Install the cosign public key
+sudo mkdir -p /etc/pki/containers
+sudo curl -fsSL https://raw.githubusercontent.com/nativetexan70/bluefin-freeipa/main/build_files/cosign.pub \
+    -o /etc/pki/containers/bluefin-freeipa.pub
+
+# Install the signature policy
+sudo curl -fsSL https://raw.githubusercontent.com/nativetexan70/bluefin-freeipa/main/build_files/policy.json \
+    -o /etc/containers/policy.json
+
+# Install the sigstore registry config
+sudo mkdir -p /etc/containers/registries.d
+sudo curl -fsSL https://raw.githubusercontent.com/nativetexan70/bluefin-freeipa/main/build_files/registries.d-nativetexan70.yaml \
+    -o /etc/containers/registries.d/ghcr.io-nativetexan70.yaml
+
+sudo bootc upgrade
+```
+
+After rebooting into the new image, all subsequent upgrades will show `ostree-image-signed` and no further action is needed.
+
 ## Troubleshooting: SELinux Permission Errors During Switch or Upgrade
 
 If `bootc switch` or `bootc upgrade` fails with an error like:
