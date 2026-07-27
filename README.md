@@ -2,7 +2,7 @@
 
 A custom [bootc](https://github.com/bootc-dev/bootc) image layered on [Bluefin](https://github.com/ublue-os/bluefin) (Universal Blue) that ships `freeipa-client` and all required dependencies pre-installed. The image is built and published automatically to GHCR via GitHub Actions and is designed to preserve an existing FreeIPA domain join across `bootc` updates.
 
-Published image: `ghcr.io/nativetexan70/bluefin-freeipa:latest`
+Published image: `ghcr.io/personalcyber/bluefin-freeipa:latest`
 
 ---
 
@@ -13,7 +13,7 @@ Published image: `ghcr.io/nativetexan70/bluefin-freeipa:latest`
 If you are already running a bootc-based system (Bazzite, Bluefin, Aurora, etc.), switching requires a single command and a reboot. No reinstall is needed.
 
 ```bash
-sudo bootc switch ghcr.io/nativetexan70/bluefin-freeipa:latest
+sudo bootc switch ghcr.io/personalcyber/bluefin-freeipa:latest
 ```
 
 `bootc switch` stages the new image. The switch takes effect on the next reboot.
@@ -33,7 +33,7 @@ sudo bootc status
 
 ## From a Non-bootc Fedora or RPM-based System
 
-A fresh install using an ISO is the recommended path. Download or build an ISO from this repository (see [Building Disk Images](#building-disk-images)) and boot from it. The installer's post-install script automatically switches the new system to `ghcr.io/nativetexan70/bluefin-freeipa:latest`.
+A fresh install using an ISO is the recommended path. Download or build an ISO from this repository (see [Building Disk Images](#building-disk-images)) and boot from it. The installer's post-install script automatically switches the new system to `ghcr.io/personalcyber/bluefin-freeipa:latest`.
 
 ---
 
@@ -221,6 +221,64 @@ To trigger a manual update check:
 sudo bootc upgrade
 ```
 
+## Troubleshooting: Unverified Registry Warning
+
+If `bootc upgrade` shows a message like:
+
+```
+Pulling manifest: ostree-unverified-registry:ghcr.io/personalcyber/bluefin-freeipa:latest
+```
+
+This means the running system does not yet have the cosign signature policy installed. The policy files are baked into this image and take effect automatically on all future upgrades **after** the first one — but the very first upgrade from an older image (or from a switched system) still runs without them.
+
+**One-time fix:** install the policy files manually, then run the upgrade:
+
+```bash
+# Install the cosign public key
+sudo mkdir -p /etc/pki/containers
+sudo curl -fsSL https://raw.githubusercontent.com/personalcyber/bluefin-freeipa/main/build_files/cosign.pub \
+    -o /etc/pki/containers/bluefin-freeipa.pub
+
+# Install the signature policy
+sudo curl -fsSL https://raw.githubusercontent.com/personalcyber/bluefin-freeipa/main/build_files/policy.json \
+    -o /etc/containers/policy.json
+
+# Install the sigstore registry config
+sudo mkdir -p /etc/containers/registries.d
+sudo curl -fsSL https://raw.githubusercontent.com/personalcyber/bluefin-freeipa/main/build_files/registries.d-personalcyber.yaml \
+    -o /etc/containers/registries.d/ghcr.io-personalcyber.yaml
+
+sudo bootc upgrade
+```
+
+After rebooting into the new image, all subsequent upgrades will show `ostree-image-signed` and no further action is needed.
+
+## Troubleshooting: SELinux Permission Errors During Switch or Upgrade
+
+If `bootc switch` or `bootc upgrade` fails with an error like:
+
+```
+Switching (ostree): Pulling: Importing: Writing merged filesystem to mtree:
+Writing content object: Setting xattrs: fsetxattr(security.selinux): Permission denied
+```
+
+This means the bootc process lacks the `CAP_MAC_ADMIN` Linux capability needed to write SELinux security labels onto files in the new image layer. It is most common when switching between different base images (e.g. Bazzite → bluefin-freeipa) but can also occur on first upgrade to a new major image version.
+
+**Workaround:** Put SELinux into permissive mode for the duration of the switch, then reboot:
+
+```bash
+sudo setenforce 0
+sudo bootc switch ghcr.io/personalcyber/bluefin-freeipa:latest
+# or: sudo bootc upgrade
+sudo setenforce 1
+systemctl reboot
+```
+
+`setenforce 0` is transient — it only lasts until the next reboot. On first boot into the new image, the deployed image's own SELinux policy activates and the filesystem is automatically relabeled. This is safe because security is restored as soon as the new image boots.
+
+> [!NOTE]
+> If you are switching from a non-bootc system or a completely different distribution, a fresh install from the [installer ISO](#building-disk-images-locally) is the more reliable path.
+
 ---
 
 # Building the Image Locally
@@ -301,12 +359,12 @@ Run `just clean` to remove all build artifacts.
 
 # Building Disk Images via GitHub Actions
 
-The [build-disk.yml](./.github/workflows/build-disk.yml) workflow builds installable disk images (`qcow2`, `anaconda-iso-gnome`, and `anaconda-iso-kde`) from the **published** OCI image at `ghcr.io/nativetexan70/bluefin-freeipa:latest`. Trigger it manually from the **Actions** tab, selecting `amd64` or `arm64`.
+The [build-disk.yml](./.github/workflows/build-disk.yml) workflow builds installable disk images (`qcow2`, `anaconda-iso-gnome`, and `anaconda-iso-kde`) from the **published** OCI image at `ghcr.io/personalcyber/bluefin-freeipa:latest`. Trigger it manually from the **Actions** tab, selecting `amd64` or `arm64`.
 
 > [!NOTE]
 > The GitHub Actions workflow uses the last image pushed to GHCR, not your local build. Push your changes and wait for the `build.yml` workflow to complete before triggering `build-disk.yml`.
 
-The ISO kickstart is pre-configured to switch a newly installed system to `ghcr.io/nativetexan70/bluefin-freeipa:latest` automatically.
+The ISO kickstart is pre-configured to switch a newly installed system to `ghcr.io/personalcyber/bluefin-freeipa:latest` automatically.
 
 To upload disk images to S3, add the following repository secrets under `Settings` → `Secrets and Variables` → `Actions`:
 
@@ -328,7 +386,7 @@ Images pushed to GHCR are signed with [Cosign](https://github.com/sigstore/cosig
 To verify an image locally:
 
 ```bash
-cosign verify --key cosign.pub ghcr.io/nativetexan70/bluefin-freeipa:latest
+cosign verify --key cosign.pub ghcr.io/personalcyber/bluefin-freeipa:latest
 ```
 
 > [!WARNING]
