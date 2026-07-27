@@ -2,7 +2,7 @@
   "default": [{"type": "insecureAcceptAnything"}],
   "transports": {
     "docker": {
-      "ghcr.io/nativetexan70/bluefin-freeipa": [
+      "ghcr.io/personalcyber/bluefin-freeipa": [
         {
           "type": "sigstoreSigned",
           "keyPath": "/etc/pki/containers/bluefin-freeipa.pub",

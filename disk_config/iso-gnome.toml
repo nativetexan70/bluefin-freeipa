@@ -1,7 +1,7 @@
 [customizations.installer.kickstart]
 contents = """
 %post
-bootc switch --mutate-in-place --transport registry ghcr.io/nativetexan70/bluefin-freeipa:latest
+bootc switch --mutate-in-place --transport registry ghcr.io/personalcyber/bluefin-freeipa:latest
 
 # Ensure Flathub is registered as the system Flatpak remote so that
 # system apps shipped by the Bluefin base image are resolvable and
