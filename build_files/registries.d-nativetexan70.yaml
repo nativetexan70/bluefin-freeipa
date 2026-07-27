@@ -1,3 +1,0 @@
-docker:
-  ghcr.io/nativetexan70:
-    use-sigstore-attachments: true
