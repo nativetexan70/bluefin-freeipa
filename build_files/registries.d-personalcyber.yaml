@@ -1,0 +1,3 @@
+docker:
+  ghcr.io/personalcyber:
+    use-sigstore-attachments: true

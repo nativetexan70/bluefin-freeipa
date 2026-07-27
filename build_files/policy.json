@@ -1,0 +1,14 @@
+{
+  "default": [{"type": "insecureAcceptAnything"}],
+  "transports": {
+    "docker": {
+      "ghcr.io/personalcyber/bluefin-freeipa": [
+        {
+          "type": "sigstoreSigned",
+          "keyPath": "/etc/pki/containers/bluefin-freeipa.pub",
+          "signedIdentity": {"type": "matchRepository"}
+        }
+      ]
+    }
+  }
+}
