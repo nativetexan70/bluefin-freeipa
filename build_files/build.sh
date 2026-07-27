@@ -37,6 +37,100 @@ systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
 
+### Configure cosign image verification for bootc upgrades
+#
+# Without this, bootc pull shows "ostree-unverified-registry" because it has
+# no policy telling it to verify signatures. Installing the public key and a
+# sigstore policy turns every subsequent "bootc upgrade" into a verified pull
+# against the cosign signature attached to the GHCR image.
+
+install -Dm644 /ctx/cosign.pub \
+    /etc/pki/containers/bluefin-freeipa.pub
+install -Dm644 /ctx/policy.json \
+    /etc/containers/policy.json
+install -Dm644 /ctx/registries.d-personalcyber.yaml \
+    /etc/containers/registries.d/ghcr.io-personalcyber.yaml
+
+### Universal Blue branding — replace Bluefin logos throughout
+#
+# Bluefin ships logo files in three places that are visible to users:
+#
+#   1. Plymouth boot watermark (/usr/share/plymouth/themes/spinner/watermark.png)
+#   2. GDM login screen logo  (/usr/share/pixmaps/fedora-gdm-logo.png)
+#      and related pixmap files
+#   3. GNOME Shell Logo Menu  (/usr/share/icons/hicolor/scalable/actions/
+#                               ublue-logo-symbolic.svg)
+#
+# The bgrt Plymouth theme only shows bgrt-fallback.png when no UEFI firmware
+# logo is present. Switching to the spinner theme ensures the watermark is
+# always displayed regardless of hardware.
+
+# Plymouth — spinner theme watermark (shown on all hardware)
+# Plymouth renders watermark.png at native pixel size. Bluefin's original
+# watermark is 288x43px; the horizontal wordmark is rendered at 300x76 to
+# match the original scale while showing the icon+text wordmark.
+install -Dm644 /ctx/ublue-logo-watermark.png \
+    /usr/share/plymouth/themes/spinner/watermark.png
+install -Dm644 /ctx/ublue-logo-watermark.png \
+    /usr/share/plymouth/themes/spinner/bgrt-fallback.png
+install -Dm644 /ctx/ublue-logo-watermark.png \
+    /usr/share/plymouth/themes/spinner/silverblue-watermark.png
+plymouth-set-default-theme spinner
+
+# GDM login screen and system pixmaps (400x101 horizontal wordmark)
+for _pixmap in fedora-gdm-logo.png fedora-logo.png fedora-logo-icon.png \
+               fedora-logo-small.png fedora-logo-sprite.png \
+               fedora_logo_med.png fedora_whitelogo_med.png \
+               system-logo-white.png; do
+    install -Dm644 /ctx/ublue-logo-gdm.png "/usr/share/pixmaps/${_pixmap}"
+done
+unset _pixmap
+
+# GNOME Shell icon (Logo Menu extension + custom-command-list panel button)
+install -Dm644 /ctx/ublue-logo-symbolic.svg \
+    /usr/share/icons/hicolor/scalable/actions/ublue-logo-symbolic.svg
+gtk-update-icon-cache --force /usr/share/icons/hicolor
+
+# Logo Menu dconf override — use our SVG as the panel button icon.
+# The Logo Menu extension reads icons from its own bundled Resources/ dir via
+# menu-button-icon-image (integer index). Setting use-custom-icon=true with a
+# custom-icon-path bypasses the index lookup and uses our file directly.
+install -dm755 /etc/dconf/db/distro.d
+cat > /etc/dconf/db/distro.d/06-ublue-logo-menu << 'DCONFEOF'
+[org/gnome/shell/extensions/Logo-menu]
+use-custom-icon=true
+custom-icon-path='/usr/share/icons/hicolor/scalable/actions/ublue-logo-symbolic.svg'
+symbolic-icon=true
+DCONFEOF
+dconf update
+
+# Fastfetch terminal logo — replace Bluefin mascot with UBlue logo.
+# Fastfetch uses bluefin.png as the primary image source on terminal open.
+# The sixel and symbol variants require tooling unavailable at build time;
+# remove them so fastfetch falls back to the PNG without errors.
+install -Dm644 /ctx/ublue-logo.png \
+    /usr/share/ublue-os/bluefin-logos/bluefin.png
+rm -f /usr/share/ublue-os/bluefin-logos/sixels/bluefin
+rm -f /usr/share/ublue-os/bluefin-logos/symbols/bluefin
+
+# Anaconda installer sidebar logo — shown during ISO installs built via BIB.
+# install -D creates the destination directory tree if it does not exist.
+install -Dm644 /ctx/ublue-logo-gdm.png \
+    /usr/share/anaconda/pixmaps/silverblue/sidebar-logo.png
+
+# Bluefin help desktop entry — update name (entry is NoDisplay=true;
+# only visible in default-app pickers for help:// URI schemes).
+if [[ -f /usr/share/applications/bluefin-help.desktop ]]; then
+    sed -i 's/^Name=.*/Name=Universal Blue Help/' \
+        /usr/share/applications/bluefin-help.desktop
+fi
+
+# Rebuild the initramfs so the updated Plymouth assets and theme selection
+# are baked into the deployed boot image.
+# --no-hostonly avoids hardware-specific probing that fails in a container.
+# --regenerate-all rebuilds for every installed kernel version.
+dracut --no-hostonly --regenerate-all --force
+
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
 # Repos inherited from the Bluefin base image may reference
