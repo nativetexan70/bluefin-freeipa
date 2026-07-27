@@ -48,8 +48,8 @@ install -Dm644 /ctx/cosign.pub \
     /etc/pki/containers/bluefin-freeipa.pub
 install -Dm644 /ctx/policy.json \
     /etc/containers/policy.json
-install -Dm644 /ctx/registries.d-nativetexan70.yaml \
-    /etc/containers/registries.d/ghcr.io-nativetexan70.yaml
+install -Dm644 /ctx/registries.d-personalcyber.yaml \
+    /etc/containers/registries.d/ghcr.io-personalcyber.yaml
 
 ### Universal Blue branding — replace Bluefin logos throughout
 #
