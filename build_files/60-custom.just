@@ -4,84 +4,42 @@
 ## base Bluefin image's top-level Justfile, making these recipes available
 ## via `ujust <recipe>` on the deployed system.
 
-# Configure hibernation (creates/reuses a swapfile, sets resume kernel args)
+# Set up hibernation: swapfile, SELinux label, and resume kernel arguments
 [group('System')]
-configure-hibernation size="":
+setup-hibernation size="":
     #!/usr/bin/bash
     set -oue pipefail
-
-    SWAP_DIR="/var/swap"
-    SWAP_FILE="${SWAP_DIR}/swapfile"
-
-    if [[ "${UID}" -ne 0 ]]; then
-        echo "This recipe needs root privileges; re-running with sudo..."
-        exec sudo ujust configure-hibernation "{{ size }}"
+    if [[ -n "{{ size }}" ]]; then
+        sudo /usr/libexec/hibernation-setup.sh "{{ size }}"
+    else
+        sudo /usr/libexec/hibernation-setup.sh
     fi
 
-    mkdir -p "${SWAP_DIR}"
-    chmod 0700 "${SWAP_DIR}"
+# Undo setup-hibernation: remove the swapfile, fstab entry, and kernel arguments
+[group('System')]
+remove-hibernation:
+    sudo /usr/libexec/hibernation-remove.sh
 
-    if [[ -f "${SWAP_FILE}" ]]; then
-        echo "Existing swapfile found at ${SWAP_FILE}; reusing it."
+# Toggle suspend-then-hibernate: suspend first, hibernate after 90 min asleep
+[group('System')]
+toggle-suspend-then-hibernate:
+    #!/usr/bin/bash
+    set -oue pipefail
+    logind_conf=/etc/systemd/logind.conf.d/50-suspend-then-hibernate.conf
+    sleep_conf=/etc/systemd/sleep.conf.d/50-suspend-then-hibernate.conf
+    if [[ -f "${logind_conf}" ]]; then
+        sudo rm -f "${logind_conf}" "${sleep_conf}"
+        echo "suspend-then-hibernate disabled; lid close and suspend key suspend normally again."
     else
-        SIZE_GB="{{ size }}"
-        if [[ -z "${SIZE_GB}" ]]; then
-            # Default to the amount of installed RAM, rounded up to the
-            # nearest GiB, which is sufficient for hibernation on most systems.
-            MEM_KB="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
-            SIZE_GB="$(( (MEM_KB + 1024 * 1024 - 1) / (1024 * 1024) ))"
+        if [[ ! -f /var/swap/swapfile ]]; then
+            echo "No hibernation swapfile found. Run 'ujust setup-hibernation' first."
+            exit 1
         fi
-        echo "Creating a ${SIZE_GB}GiB swapfile at ${SWAP_FILE}..."
-
-        FSTYPE="$(findmnt -no FSTYPE -T "${SWAP_DIR}")"
-        if [[ "${FSTYPE}" == "btrfs" ]] && btrfs filesystem mkswapfile --help &>/dev/null; then
-            btrfs filesystem mkswapfile --size "${SIZE_GB}g" --uuid clear "${SWAP_FILE}"
-        else
-            if [[ "${FSTYPE}" == "btrfs" ]]; then
-                truncate -s 0 "${SWAP_FILE}"
-                chattr +C "${SWAP_FILE}" || true
-            fi
-            fallocate -l "${SIZE_GB}GiB" "${SWAP_FILE}" || dd if=/dev/zero of="${SWAP_FILE}" bs=1M count="$(( SIZE_GB * 1024 ))"
-            chmod 0600 "${SWAP_FILE}"
-            mkswap "${SWAP_FILE}"
-        fi
+        sudo mkdir -p /etc/systemd/logind.conf.d /etc/systemd/sleep.conf.d
+        printf '[Login]\nHandleLidSwitch=suspend-then-hibernate\nHandleSuspendKey=suspend-then-hibernate\n' \
+            | sudo tee "${logind_conf}" >/dev/null
+        printf '[Sleep]\nHibernateDelaySec=90min\n' | sudo tee "${sleep_conf}" >/dev/null
+        echo "suspend-then-hibernate enabled: lid close / suspend key now suspend first,"
+        echo "then wake and hibernate after 90 minutes asleep (edit ${sleep_conf} to tune)."
     fi
-
-    chmod 0600 "${SWAP_FILE}"
-
-    if ! grep -q "^${SWAP_FILE}[[:space:]]" /etc/fstab 2>/dev/null; then
-        echo "${SWAP_FILE} none swap defaults 0 0" >> /etc/fstab
-    fi
-
-    swapon "${SWAP_FILE}" 2>/dev/null || swapon --all
-
-    FSTYPE="$(findmnt -no FSTYPE -T "${SWAP_DIR}")"
-    if [[ "${FSTYPE}" == "btrfs" ]]; then
-        RESUME_OFFSET="$(btrfs inspect-internal map-swapfile -r "${SWAP_FILE}")"
-    else
-        RESUME_OFFSET="$(filefrag -v "${SWAP_FILE}" | awk '$1=="0:" {n=split($4,a,"\\.\\."); print a[1]; exit}')"
-    fi
-    RESUME_UUID="$(findmnt -no UUID -T "${SWAP_DIR}")"
-
-    if [[ -z "${RESUME_OFFSET}" || -z "${RESUME_UUID}" ]]; then
-        echo "Failed to determine resume_offset/UUID for ${SWAP_FILE}." >&2
-        exit 1
-    fi
-
-    echo "Setting resume=UUID=${RESUME_UUID} resume_offset=${RESUME_OFFSET} kernel args..."
-    if command -v rpm-ostree &>/dev/null; then
-        rpm-ostree kargs \
-            --delete-if-present="resume=" \
-            --delete-if-present="resume_offset=" \
-            --append="resume=UUID=${RESUME_UUID}" \
-            --append="resume_offset=${RESUME_OFFSET}"
-        echo "Kernel arguments staged. Reboot to apply and enable hibernation."
-    elif command -v grubby &>/dev/null; then
-        grubby --update-kernel=ALL \
-            --remove-args="resume resume_offset" \
-            --args="resume=UUID=${RESUME_UUID} resume_offset=${RESUME_OFFSET}"
-        echo "Kernel arguments updated via grubby. Reboot to apply and enable hibernation."
-    else
-        echo "Neither rpm-ostree nor grubby found; set resume=UUID=${RESUME_UUID} resume_offset=${RESUME_OFFSET} manually." >&2
-        exit 1
-    fi
+    echo "logind reads this config at startup - reboot (or restart systemd-logind) to apply."
