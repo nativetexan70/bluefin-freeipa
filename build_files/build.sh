@@ -6,10 +6,16 @@ set -ouex pipefail
 
 # freeipa-client pulls in sssd, krb5-workstation, certmonger, and other
 # required dependencies automatically.
+#
+# policycoreutils-python-utils provides semanage, used by
+# `ujust setup-hibernation` to persistently label the hibernation swapfile
+# swapfile_t (systemd's boot-time swapon is denied by SELinux on the
+# default var_t label).
 dnf5 install -y \
     freeipa-client \
     oddjob \
-    oddjob-mkhomedir
+    oddjob-mkhomedir \
+    policycoreutils-python-utils
 
 ### Preserve FreeIPA join state across bootc updates
 #
@@ -30,6 +36,34 @@ install -d -m 0750 /etc/sssd/conf.d
 install -d -m 0711 /var/lib/sss/db
 install -d -m 0755 /var/lib/sss/pipes/private
 install -d -m 0755 /var/log/sssd
+
+### Ship custom ujust recipes
+#
+# Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
+# base Bluefin image's top-level Justfile, exposing these recipes via
+# `ujust <recipe>` on the deployed system.
+
+install -Dm644 /ctx/60-custom.just \
+    /usr/share/ublue-os/just/60-custom.just
+
+### Hibernation setup/removal helper scripts
+#
+# The swapfile, resume offset, and filesystem UUID are all per-machine and
+# unknowable at build time (the swapfile lives under /var, which is not part
+# of the image), so the actual setup runs on the deployed machine via
+# `ujust setup-hibernation` / `ujust remove-hibernation`. This just ships the
+# scripts those recipes call.
+
+install -Dm755 /ctx/hibernation-setup.sh \
+    /usr/libexec/hibernation-setup.sh
+install -Dm755 /ctx/hibernation-remove.sh \
+    /usr/libexec/hibernation-remove.sh
+
+# Keeps resume-from-hibernation support in any locally regenerated initramfs
+# (the shipped initramfs is generic and already has it via dracut --regenerate-all
+# below; this only matters if `rpm-ostree initramfs --enable` is used later).
+install -Dm644 /ctx/95-hibernation-resume.conf \
+    /usr/lib/dracut/dracut.conf.d/95-hibernation-resume.conf
 
 ### Enable required system units
 
