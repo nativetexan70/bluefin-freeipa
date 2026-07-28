@@ -31,6 +31,15 @@ install -d -m 0711 /var/lib/sss/db
 install -d -m 0755 /var/lib/sss/pipes/private
 install -d -m 0755 /var/log/sssd
 
+### Ship custom ujust recipes
+#
+# Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
+# base Bluefin image's top-level Justfile, exposing these recipes via
+# `ujust <recipe>` on the deployed system.
+
+install -Dm644 /ctx/60-custom.just \
+    /usr/share/ublue-os/just/60-custom.just
+
 ### Enable required system units
 
 systemctl enable sssd
