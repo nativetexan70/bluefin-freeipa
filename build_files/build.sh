@@ -65,6 +65,12 @@ install -Dm755 /ctx/hibernation-remove.sh \
 install -Dm644 /ctx/95-hibernation-resume.conf \
     /usr/lib/dracut/dracut.conf.d/95-hibernation-resume.conf
 
+# Ensures eMMC/SD host controller drivers are present in the initramfs so
+# GRUB can boot the kernel on hardware whose root/boot filesystem lives on
+# an mmcblk* device. See 96-mmc-storage.conf for details.
+install -Dm644 /ctx/96-mmc-storage.conf \
+    /usr/lib/dracut/dracut.conf.d/96-mmc-storage.conf
+
 ### Enable required system units
 
 systemctl enable sssd
