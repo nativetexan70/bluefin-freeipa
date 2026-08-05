@@ -164,7 +164,13 @@ _build-bib $target_image $tag $type $config: (_rootful_load_image target_image t
 
     args="--type ${type} "
     args+="--use-librepo=True "
-    args+="--rootfs=btrfs"
+    # ext4 rather than btrfs: minimal/firmware-embedded GRUB builds (e.g.
+    # Libreboot's GRUB payload) frequently ship only the ext2/ext3/ext4
+    # driver and lack btrfs/xfs support entirely. A btrfs root is then
+    # invisible to GRUB ("unknown filesystem") even though the disk and
+    # its GPT partition table read back fine. ext4 is the filesystem type
+    # most universally supported across constrained GRUB builds.
+    args+="--rootfs=ext4"
 
     BUILDTMP=$(mktemp -p "${PWD}" -d -t _build-bib.XXXXXXXXXX)
 
