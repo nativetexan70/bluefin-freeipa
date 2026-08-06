@@ -43,3 +43,16 @@ toggle-suspend-then-hibernate:
         echo "then wake and hibernate after 90 minutes asleep (edit ${sleep_conf} to tune)."
     fi
     echo "logind reads this config at startup - reboot (or restart systemd-logind) to apply."
+
+# Grant the current user (local or FreeIPA domain) write access to install Homebrew packages
+[group('System')]
+enable-brew-install:
+    #!/usr/bin/bash
+    set -oue pipefail
+    if id -nG "${USER}" | grep -qw brew; then
+        echo "${USER} is already in the 'brew' group."
+    else
+        sudo usermod -aG brew "${USER}"
+        echo "${USER} added to the 'brew' group."
+    fi
+    echo "Log out and back in (or run 'newgrp brew') for the change to take effect."
