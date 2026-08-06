@@ -146,23 +146,23 @@ All users can run any package already installed in the shared prefix without any
 
 Package installation requires write access to the shared prefix. Access is controlled by the `brew` group.
 
-**For local users:**
+**Self-service, for the currently logged-in user (local or FreeIPA domain):**
 
 ```bash
-sudo usermod -aG brew <username>
+ujust enable-brew-install
 ```
 
-The user must log out and back in for the group change to take effect.
+This adds `$USER` to the local `brew` group via `sudo usermod -aG brew`. It works the same way for FreeIPA domain users as it does for local accounts — group membership is just an entry in the local `/etc/group` file keyed by username, and NSS resolves domain usernames through `sssd` the same way it resolves local ones.
 
-**For FreeIPA domain users:**
-
-Add the user to the local `brew` group on each host where they need install access:
+**For an admin granting access to another user:**
 
 ```bash
-sudo usermod -aG brew <domain-username>
+sudo usermod -aG brew <username-or-domain-username>
 ```
 
-Or manage it centrally via an IPA sudo rule or HBAC rule that grants `usermod` privileges to a designated admin group.
+Run this on each host where the user needs install access, or manage it centrally via an IPA sudo rule or HBAC rule that grants `usermod` privileges to a designated admin group.
+
+In both cases, the user must log out and back in (or run `newgrp brew`) for the group change to take effect.
 
 > [!NOTE]
 > Users not in the `brew` group can still run any package that is already installed. Only writing new packages to the shared prefix requires group membership.
