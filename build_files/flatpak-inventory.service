@@ -1,0 +1,8 @@
+[Unit]
+Description=Collect installed Flatpak application inventory for osquery/Fleet
+Documentation=https://github.com/personalcyber/bluefin-freeipa
+ConditionPathExists=/usr/bin/flatpak
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/flatpak-inventory.py

@@ -53,6 +53,28 @@ bootc performs a three-way `/etc` merge on update: it diffs old-image `/etc` vs 
 
 Orbit's binaries install under `/opt/orbit` and `/usr/local/bin/orbit`, both of which resolve through symlinks to `/var/opt` and `/var/usrlocal` in this ostree-based image. Unlike `/etc`, bootc/ostree do **not** carry `/var` file content from the container image onto a deployed system — only `/usr` and the three-way-merged `/etc` get checked out. Content the RPM writes under `/var` at build time is baked into the OCI layer but never applied to a deployed host's `/var`, which surfaces at runtime as `orbit.service` failing with `status=203/EXEC` ("Unable to locate executable '/opt/orbit/bin/orbit/orbit'") even though `rpm -ql fleet-osquery` still lists the path (rpmdb lives under `/usr`, which *is* shipped). `build.sh` works around this by relocating the real payload into `/usr/lib/orbit-seed` (real, shipped `/usr` content) and shipping a `systemd-tmpfiles.d` snippet (`/usr/lib/tmpfiles.d/orbit-seed.conf`) that copies it into `/opt/orbit` and `/usr/local/bin/orbit` on first boot. tmpfiles' `C` copy only fires when the destination is missing, so it seeds once per host and never clobbers state Orbit's own TUF autoupdater later writes into `/opt/orbit`.
 
+### Flatpak Inventory for Fleet/osquery
+
+osquery has no native `flatpak_packages` table (unlike `deb_packages`/`rpm_packages`), so Fleet can't see installed Flatpak apps out of the box — Bluefin's Flathub-backed Flatpak setup is otherwise invisible to Fleet's Software inventory. This image closes that gap with osquery's [Automatic Table Construction (ATC)](https://osquery.readthedocs.io/en/stable/deployment/config-server/#automatic-table-construction) feature, which exposes an arbitrary SQLite table as a normal queryable osquery table:
+
+- `build.sh` installs `/usr/libexec/flatpak-inventory.py`, a script that runs `flatpak list --app --columns=...` (the `--columns` form gives stable, script-friendly tab-separated output with no header, unlike the default human-oriented table) and rebuilds (`DROP`+`CREATE`, so removed apps disappear) a `flatpak_packages` table in `/var/lib/flatpak-inventory/flatpak.db`.
+- `flatpak-inventory.timer` (enabled by default) runs that script every 15 minutes, starting 5 minutes after boot. The script creates its own database directory at runtime (`os.makedirs`), so — unlike Orbit's `/opt` payload — there's no build-time `/var` content that needs `tmpfiles.d` seeding here; the data only ever exists at runtime.
+- Only the system-wide Flatpak installation (`/var/lib/flatpak`) is covered, since the timer runs as root; per-user installs under `~/.local/share/flatpak` are not enumerated.
+- The database is inert until Fleet is told to read it. Add this to the Fleet server's `agent_options` (Controls → OS settings, or via the YAML/API config) to make `SELECT * FROM flatpak_packages` work as a live or scheduled query:
+
+  ```yaml
+  config:
+    options:
+      # ... existing options ...
+    auto_table_construction:
+      flatpak_packages:
+        query: "SELECT application, version, branch, origin, ref, installation FROM flatpak_packages"
+        path: "/var/lib/flatpak-inventory/flatpak.db"
+        columns: ["application", "version", "branch", "origin", "ref", "installation"]
+  ```
+
+  This ATC table won't appear on Fleet's Host Details **Software** tab (that view only aggregates the known built-in package tables), but it's fully queryable and can be scheduled/exported through Fleet's log pipeline like any other table.
+
 ### Hostname Preservation
 
 The upstream Bluefin image ships `/etc/hostname` with a default value. To prevent bootc from ever merging that default over a locally configured hostname (which would break Kerberos), this image ships `/etc/hostname` as an empty file via a `COPY` instruction. `RUN rm -f /etc/hostname` does not work because the OCI build runtime bind-mounts `/etc/hostname` into every `RUN` container, causing "Device or resource busy". `COPY` writes directly to the image layer filesystem outside of a running container and is not subject to the bind-mount.
