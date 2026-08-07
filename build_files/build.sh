@@ -142,11 +142,34 @@ unset _fleetctl_workdir _fleet_releases _fleet_tag _fleet_version _fleet_arch
 # that bootc's three-way /etc merge will never overwrite.
 install -m 0644 /dev/null /etc/default/orbit
 
-# Orbit's runtime state (enroll secret cache, osqueryd DB, logs) lives
-# under /opt/orbit. Bluefin's base image already symlinks /opt to
-# /var/opt (see the /opt note near the top of the Containerfile), so this
-# is mutable and preserved across updates the same way /var/lib/sss is,
-# with no extra setup required here.
+### Seed Orbit's /opt and /usr/local payload at first boot via tmpfiles.d
+#
+# The RPM installed above writes orbit/osqueryd under /opt/orbit and a
+# launcher under /usr/local/bin/orbit. Both /opt and /usr/local are
+# symlinked to /var/opt and /var/usrlocal in this ostree-based image (see
+# the /opt note near the top of the Containerfile), and bootc/ostree only
+# check out /usr and the three-way-merged /etc onto a deployed system —
+# file content written under /var during this build is baked into the
+# OCI layer but never applied to a deployed host's /var beyond the very
+# first stateroot init. In practice this means orbit.service fails at
+# runtime with "status=203/EXEC ... Unable to locate executable
+# '/opt/orbit/bin/orbit/orbit'" even though `rpm -ql fleet-osquery` still
+# lists the path — rpm's metadata lives under /usr (shipped), but the
+# binaries it points at were only ever written under /var (not shipped).
+#
+# Fix: relocate the real payload into /usr/lib/orbit-seed (real /usr
+# content, so it IS shipped and versioned with the image), then install a
+# systemd-tmpfiles.d snippet that copies it into place under /opt/orbit
+# and /usr/local/bin/orbit on first boot. tmpfiles' `C` line type only
+# copies when the destination doesn't already exist, so this seeds once
+# per host and never clobbers state Orbit's own TUF autoupdater later
+# writes into /opt/orbit (osqueryd DB, downloaded updates, etc.).
+mkdir -p /usr/lib/orbit-seed/opt /usr/lib/orbit-seed/usr-local-bin
+mv /var/opt/orbit /usr/lib/orbit-seed/opt/orbit
+mv /var/usrlocal/bin/orbit /usr/lib/orbit-seed/usr-local-bin/orbit
+
+install -Dm644 /ctx/orbit-seed.conf \
+    /usr/lib/tmpfiles.d/orbit-seed.conf
 
 ### Ship custom ujust recipes
 #
