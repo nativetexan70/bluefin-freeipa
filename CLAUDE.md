@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repository Is
 
-A custom [bootc](https://github.com/bootc-dev/bootc) OCI image layered on top of `ghcr.io/ublue-os/bluefin:stable` (a Universal Blue image), adding FreeIPA client support. Images are built via GitHub Actions and published to `ghcr.io/personalcyber/bluefin-freeipa`. The image is designed so that a FreeIPA domain join survives `bootc` updates via bootc's three-way `/etc` merge.
+A custom [bootc](https://github.com/bootc-dev/bootc) OCI image layered on top of `ghcr.io/ublue-os/bluefin:stable` (a Universal Blue image), adding FreeIPA client support and the [Fleet](https://fleetdm.com) agent (`fleetd`). Images are built via GitHub Actions and published to `ghcr.io/personalcyber/bluefin-freeipa`. The image is designed so that a FreeIPA domain join and a Fleet enrollment both survive `bootc` updates via bootc's three-way `/etc` merge.
 
 ## Common Commands
 
@@ -31,7 +31,7 @@ just clean                  # Remove build artifacts from output/
 ### Build Pipeline
 
 1. **`Containerfile`** — Two-stage build: a scratch `ctx` stage copies `build_files/` (making scripts available without embedding them in the final layer). The base image is `ghcr.io/ublue-os/bluefin:stable`. After the main `RUN` step, a `COPY` instruction ships an empty `/etc/hostname` (see Hostname Preservation below). Ends with `bootc container lint`.
-2. **`build_files/build.sh`** — Executed during the container build (`RUN /ctx/build.sh`). Installs `freeipa-client`, `oddjob`, `oddjob-mkhomedir`; creates `/etc/ipa/` and `/etc/sssd/conf.d/` directory skeletons; pre-creates `/var/lib/sss/` and `/var/log/sssd/`; enables `sssd`, `oddjobd`, and `podman.socket`. Runs with `set -ouex pipefail`.
+2. **`build_files/build.sh`** — Executed during the container build (`RUN /ctx/build.sh`). Installs `freeipa-client`, `oddjob`, `oddjob-mkhomedir`; creates `/etc/ipa/` and `/etc/sssd/conf.d/` directory skeletons; pre-creates `/var/lib/sss/` and `/var/log/sssd/`; builds and installs `fleetd` (Fleet's agent) via `fleetctl package --use-system-configuration` and truncates `/etc/default/orbit` to empty; enables `sssd`, `oddjobd`, `podman.socket`, and `orbit`. Runs with `set -ouex pipefail`.
 3. **`build_files/hostname`** — Empty file copied to `/etc/hostname` in the image via `COPY`. Must remain empty.
 4. **GitHub Actions (`build.yml`)** — Triggers on push to `main`, PRs, and daily schedule. Builds with `buildah`, pushes to GHCR only on non-PR pushes to the default branch, signs with Cosign using `SIGNING_SECRET`.
 5. **GitHub Actions (`build-disk.yml`)** — Manually triggered workflow producing `qcow2`, `anaconda-iso-gnome`, and `anaconda-iso-kde` disk images from the published OCI image using `bootc-image-builder`. Can optionally upload to S3.
@@ -46,6 +46,10 @@ just clean                  # Remove build artifacts from output/
 ### FreeIPA Join Persistence
 
 bootc performs a three-way `/etc` merge on update: it diffs old-image `/etc` vs new-image `/etc` and applies that delta to local `/etc`. Files written by `ipa-client-install` (`sssd.conf`, `krb5.conf`, `/etc/ipa/default.conf`, etc.) are never shipped in this image, so bootc treats them as local additions and never overwrites them. The `/etc/ipa/` and `/etc/sssd/conf.d/` directories are present in the image as empty skeletons — no config content is shipped inside them.
+
+### Fleet Agent Persistence
+
+`fleetd` (Orbit + osqueryd) is built in `build.sh` via `fleetctl package --type=rpm --use-system-configuration`, which produces an RPM that does not have a Fleet URL or enroll secret compiled in. Instead, Orbit reads `ORBIT_FLEET_URL`/`ORBIT_ENROLL_SECRET` (and related settings) from `/etc/default/orbit` at runtime. `build.sh` truncates that file to empty after installing the package, so the same three-way `/etc` merge that protects the FreeIPA join protects Fleet enrollment: whatever an admin writes into `/etc/default/orbit` post-deployment is a local addition bootc never overwrites. Orbit's runtime state lives under `/opt/orbit`, which the Bluefin base image symlinks to `/var/opt/orbit` — mutable and preserved across updates like any other `/var` path.
 
 ### Hostname Preservation
 

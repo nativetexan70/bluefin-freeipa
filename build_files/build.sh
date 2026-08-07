@@ -37,6 +37,74 @@ install -d -m 0711 /var/lib/sss/db
 install -d -m 0755 /var/lib/sss/pipes/private
 install -d -m 0755 /var/log/sssd
 
+### Install fleetd (Fleet's agent) — https://fleetdm.com/docs/configuration/agent-configuration
+#
+# fleetd bundles Orbit (an osquery runtime + autoupdater) and osqueryd.
+# Fleet does not publish a generic distro package: `fleetctl package`
+# builds one per deployment, normally baking a specific --fleet-url and
+# --enroll-secret into the resulting package. This image is not tied to
+# one Fleet server, so it is packaged with --use-system-configuration
+# instead: Orbit then reads its Fleet URL and enroll secret from
+# /etc/default/orbit at runtime, rather than from values compiled into
+# the package. That mirrors ipa-client-install — enrollment happens
+# post-deployment, on the actual host, against whatever Fleet server that
+# host is meant to join.
+#
+# fleetctl (the packaging CLI) is only needed here to build the RPM; it
+# is not installed into the final image.
+
+case "$(uname -m)" in
+    x86_64) _fleet_arch="amd64" ;;
+    aarch64) _fleet_arch="arm64" ;;
+    *)
+        echo "Unsupported architecture for fleetd: $(uname -m)" >&2
+        exit 1
+        ;;
+esac
+
+_fleetctl_workdir="$(mktemp -d)"
+
+# Resolve the latest Fleet release tag (e.g. "fleet-v4.85.0") rather than
+# pinning a version, so the agent stays current automatically as this
+# image is rebuilt.
+_fleet_tag="$(curl -fsSL https://api.github.com/repos/fleetdm/fleet/releases \
+    | grep -m1 '"tag_name"' \
+    | sed -E 's/.*"(fleet-v[0-9.]+)".*/\1/')"
+_fleet_version="${_fleet_tag#fleet-v}"
+
+curl -fsSL \
+    "https://github.com/fleetdm/fleet/releases/download/${_fleet_tag}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}.tar.gz" \
+    -o "${_fleetctl_workdir}/fleetctl.tar.gz"
+tar -xzf "${_fleetctl_workdir}/fleetctl.tar.gz" -C "${_fleetctl_workdir}"
+
+"${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
+    --type=rpm \
+    --use-system-configuration \
+    --outfile="${_fleetctl_workdir}/fleetd.rpm"
+
+dnf5 install -y "${_fleetctl_workdir}/fleetd.rpm"
+
+rm -rf "${_fleetctl_workdir}"
+unset _fleetctl_workdir _fleet_tag _fleet_version _fleet_arch
+
+### Preserve fleetd enrollment across bootc updates
+#
+# Orbit (packaged above with --use-system-configuration) reads its Fleet
+# URL and enroll secret from /etc/default/orbit instead of from values
+# baked into the package. This image never passes a real --fleet-url or
+# --enroll-secret to `fleetctl package`, so nothing meaningful ends up in
+# that file at build time — truncate it to guarantee it ships empty,
+# matching the /etc/ipa and /etc/sssd/conf.d skeletons above. Whatever an
+# admin writes into it after deployment is therefore a local addition
+# that bootc's three-way /etc merge will never overwrite.
+install -m 0644 /dev/null /etc/default/orbit
+
+# Orbit's runtime state (enroll secret cache, osqueryd DB, logs) lives
+# under /opt/orbit. Bluefin's base image already symlinks /opt to
+# /var/opt (see the /opt note near the top of the Containerfile), so this
+# is mutable and preserved across updates the same way /var/lib/sss is,
+# with no extra setup required here.
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
@@ -76,6 +144,7 @@ install -Dm644 /ctx/96-mmc-storage.conf \
 systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
+systemctl enable orbit
 
 ### Configure cosign image verification for bootc upgrades
 #
