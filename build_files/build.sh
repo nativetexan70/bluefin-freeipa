@@ -108,6 +108,15 @@ mkdir -p /root/.goquery
     --type=rpm \
     --outfile="${_fleetctl_workdir}/fleetd.rpm"
 
+# The RPM installs Orbit under /opt/orbit. /opt is symlinked to /var/opt
+# in this image (see the /opt note near the top of the Containerfile),
+# and /var is only a build-time cache mount here, so /var/opt doesn't
+# exist yet — the same dangling-symlink problem as /root above. Without
+# a real target, rpm's cpio unpack fails trying to create
+# /opt/orbit/bin/orbit/... ("mkdir failed - File exists" /
+# "No such file or directory"). Create the real target directory first.
+mkdir -p /var/opt
+
 dnf5 install -y "${_fleetctl_workdir}/fleetd.rpm"
 
 rm -rf "${_fleetctl_workdir}"
