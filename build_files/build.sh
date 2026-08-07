@@ -171,6 +171,25 @@ mv /var/usrlocal/bin/orbit /usr/lib/orbit-seed/usr-local-bin/orbit
 install -Dm644 /ctx/orbit-seed.conf \
     /usr/lib/tmpfiles.d/orbit-seed.conf
 
+### Flatpak inventory for Fleet/osquery
+#
+# osquery has no native flatpak_packages table (unlike deb_packages /
+# rpm_packages), so Fleet can't see installed Flatpak apps out of the
+# box. flatpak-inventory.py rebuilds a small SQLite database describing
+# them; a Fleet-side agent_options `auto_table_construction` entry (see
+# CLAUDE.md) then exposes that database as a normal queryable osquery
+# table. A systemd timer keeps the database current — unlike the FreeIPA/
+# Fleet enrollment state above, this data is only ever written at
+# runtime (never baked in at build time), so it isn't subject to the
+# /var-content-isn't-shipped problem documented for Orbit and needs no
+# tmpfiles.d seeding of its own.
+install -Dm755 /ctx/flatpak-inventory.py \
+    /usr/libexec/flatpak-inventory.py
+install -Dm644 /ctx/flatpak-inventory.service \
+    /usr/lib/systemd/system/flatpak-inventory.service
+install -Dm644 /ctx/flatpak-inventory.timer \
+    /usr/lib/systemd/system/flatpak-inventory.timer
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
@@ -211,6 +230,7 @@ systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
 systemctl enable orbit
+systemctl enable flatpak-inventory.timer
 
 ### Configure cosign image verification for bootc upgrades
 #

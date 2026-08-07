@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically collect installed Flatpak application inventory for osquery/Fleet
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
