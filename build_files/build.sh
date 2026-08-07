@@ -88,6 +88,13 @@ curl -fsSL \
     -o "${_fleetctl_workdir}/fleetctl.tar.gz"
 tar -xzf "${_fleetctl_workdir}/fleetctl.tar.gz" -C "${_fleetctl_workdir}"
 
+# fleetctl unconditionally tries to open a REPL history file at
+# $HOME/.goquery/history on startup, even for non-interactive subcommands
+# like `package`, but doesn't create the parent directory itself — it
+# fails with "no such file or directory" if that directory is missing.
+# Pre-create it so `fleetctl package` doesn't bail out on that alone.
+mkdir -p "${HOME:-/root}/.goquery"
+
 "${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
     --type=rpm \
     --use-system-configuration \
