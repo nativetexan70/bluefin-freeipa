@@ -1,6 +1,6 @@
 # bluefin-freeipa
 
-A custom [bootc](https://github.com/bootc-dev/bootc) image layered on [Bluefin](https://github.com/ublue-os/bluefin) (Universal Blue) that ships `freeipa-client` and all required dependencies pre-installed. The image is built and published automatically to GHCR via GitHub Actions and is designed to preserve an existing FreeIPA domain join across `bootc` updates.
+A custom [bootc](https://github.com/bootc-dev/bootc) image layered on [Bluefin](https://github.com/ublue-os/bluefin) (Universal Blue) that ships `freeipa-client` and the [Fleet](https://fleetdm.com) agent (`fleetd`) pre-installed, along with all required dependencies. The image is built and published automatically to GHCR via GitHub Actions and is designed so that an existing FreeIPA domain join and Fleet enrollment both survive `bootc` updates.
 
 Published image: `ghcr.io/personalcyber/bluefin-freeipa:latest`
 
@@ -86,6 +86,42 @@ sudo ipa-client-install --uninstall
 
 ---
 
+# Setting Up the Fleet Agent
+
+`fleetd` (Fleet's agent — Orbit plus osqueryd) is pre-installed, built from Fleet's `fleetctl package --type=rpm` with no `--fleet-url` or `--enroll-secret` passed, so no Fleet server URL or enroll secret is baked into the image. See [Fleet's agent configuration docs](https://fleetdm.com/docs/configuration/agent-configuration) for background on the options Orbit accepts.
+
+## Enrolling
+
+Write your Fleet server URL and enroll secret to `/etc/default/orbit`:
+
+```bash
+sudo tee /etc/default/orbit > /dev/null << 'EOF'
+ORBIT_FLEET_URL=https://fleet.your.domain.example
+ORBIT_ENROLL_SECRET=your-enroll-secret
+EOF
+
+sudo systemctl restart orbit
+```
+
+Then verify it's running and has enrolled:
+
+```bash
+systemctl status orbit
+```
+
+The host should appear in your Fleet dashboard shortly after.
+
+## Un-enrolling
+
+Stop the service and clear the config:
+
+```bash
+sudo systemctl stop orbit
+sudo truncate -s0 /etc/default/orbit
+```
+
+---
+
 # FreeIPA Join Persistence
 
 This image is specifically designed so that an existing domain join survives `bootc` updates. Here is how it works.
@@ -108,9 +144,21 @@ Runtime state (`/var/lib/sss/`, `/var/log/sssd/`) lives under `/var`, which boot
 
 ---
 
+# Fleet Agent Config Persistence
+
+Enrollment survives `bootc` updates the same way the FreeIPA join does, via the three-way `/etc` merge described above.
+
+`fleetd` is built with `fleetctl package --type=rpm` and no `--fleet-url`/`--enroll-secret`, so Orbit's systemd unit reads its Fleet URL and enroll secret from `/etc/default/orbit` at runtime instead of from values compiled into the package. This image ships that file **truncated to empty** — no server URL or secret is ever baked in — so whatever you write into it during enrollment is a local addition that bootc will never overwrite.
+
+Runtime state (`/opt/orbit`, backed by `/var/opt/orbit`) lives under `/var`, which bootc never modifies.
+
+**In practice:** after a `bootc update` and reboot, `orbit` comes back up reading the same `/etc/default/orbit` it had before the update, and Fleet enrollment continues without any intervention.
+
+---
+
 # Changes to the Base Bluefin Image
 
-This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the following deliberate modifications to support FreeIPA client functionality and ensure join state survives `bootc` updates.
+This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the following deliberate modifications to support FreeIPA client and Fleet agent functionality and ensure both persist across `bootc` updates.
 
 ## Packages Added
 
@@ -119,6 +167,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `freeipa-client` | Core FreeIPA client tooling (`ipa-client-install`, `ipa` CLI). Also pulls in `sssd`, `krb5-workstation`, `certmonger`, and other required dependencies. |
 | `oddjob` | D-Bus service that allows `sssd` to perform privileged operations (e.g. creating home directories) on behalf of unprivileged processes. |
 | `oddjob-mkhomedir` | PAM module and helper that automatically creates a home directory on first login for domain users. |
+| `fleet-osquery` (`fleetd`) | Fleet's agent — Orbit (osquery runtime + autoupdater) plus osqueryd. Built at image build time via `fleetctl package --type=rpm` with no Fleet URL or secret baked in. |
 
 ## Systemd Units Enabled
 
@@ -127,6 +176,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `sssd` | System Security Services Daemon — handles Kerberos authentication, LDAP user/group lookups, and caching for the FreeIPA domain. |
 | `oddjobd` | D-Bus daemon for `oddjob`. Must be running for `pam_oddjob_mkhomedir` to create home directories at login. |
 | `podman.socket` | Inherited from the Bluefin base; retained for rootless container support. |
+| `orbit` | Fleet's agent service. Reads its Fleet URL and enroll secret from `/etc/default/orbit`, which ships empty until an admin enrolls the host. |
 
 ## Homebrew
 
@@ -177,18 +227,20 @@ This image creates the following empty directory skeletons at build time:
 |---|---|---|
 | `/etc/ipa/` | `0755` | Root directory for IPA client config. `ipa-client-install` writes `default.conf` here. |
 | `/etc/sssd/conf.d/` | `0750` | Drop-in directory for SSSD config fragments. `ipa-client-install` writes `sssd.conf` one level up. |
+| `/etc/default/orbit` | `0644` | Environment file Orbit reads its Fleet URL and enroll secret from. Truncated to empty at build time — the `fleetd` package would otherwise ship placeholder content here. |
 
-No config files are shipped inside these directories. Every file written by `ipa-client-install` is a local addition from bootc's perspective and will never be touched by an image update.
+No config files are shipped inside these paths. Every file written by `ipa-client-install`, and every value written into `/etc/default/orbit`, is a local addition from bootc's perspective and will never be touched by an image update.
 
 ## /var Runtime Directories
 
-SSSD's cache and runtime socket directories live under `/var`, which bootc never modifies. They are pre-created at build time to avoid race conditions on first boot before `sssd` has initialised them:
+SSSD's cache and runtime socket directories, and Orbit's runtime state, live under `/var`, which bootc never modifies. The SSSD ones are pre-created at build time to avoid race conditions on first boot before `sssd` has initialised them:
 
 | Path | Permissions |
 |---|---|
 | `/var/lib/sss/db` | `0711` |
 | `/var/lib/sss/pipes/private` | `0755` |
 | `/var/log/sssd` | `0755` |
+| `/var/opt/orbit` | Created by `orbit` on first run (`/opt/orbit` is symlinked to `/var/opt/orbit` in the Bluefin base image). |
 
 ## Hostname Preservation
 

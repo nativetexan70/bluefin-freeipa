@@ -37,6 +37,117 @@ install -d -m 0711 /var/lib/sss/db
 install -d -m 0755 /var/lib/sss/pipes/private
 install -d -m 0755 /var/log/sssd
 
+### Install fleetd (Fleet's agent) — https://fleetdm.com/docs/configuration/agent-configuration
+#
+# fleetd bundles Orbit (an osquery runtime + autoupdater) and osqueryd.
+# Fleet does not publish a generic distro package: `fleetctl package`
+# builds one per deployment, normally baking a specific --fleet-url and
+# --enroll-secret into the resulting package. This image is not tied to
+# one Fleet server, so those flags are omitted entirely when packaging.
+# (--use-system-configuration would express this same intent, but it's
+# only accepted for --type=pkg/msi installers, not deb/rpm.) The
+# resulting RPM's systemd unit still reads ORBIT_FLEET_URL/
+# ORBIT_ENROLL_SECRET from /etc/default/orbit at runtime via
+# EnvironmentFile, so Orbit picks up whatever config ends up there. That
+# mirrors ipa-client-install — enrollment happens post-deployment, on the
+# actual host, against whatever Fleet server that host is meant to join.
+#
+# fleetctl (the packaging CLI) is only needed here to build the RPM; it
+# is not installed into the final image.
+
+case "$(uname -m)" in
+    x86_64) _fleet_arch="amd64" ;;
+    aarch64) _fleet_arch="arm64" ;;
+    *)
+        echo "Unsupported architecture for fleetd: $(uname -m)" >&2
+        exit 1
+        ;;
+esac
+
+_fleetctl_workdir="$(mktemp -d)"
+
+# Resolve the latest Fleet release tag (e.g. "fleet-v4.85.0") rather than
+# pinning a version, so the agent stays current automatically as this
+# image is rebuilt.
+#
+# Buffer the API response into a variable and match it with bash's
+# built-in regex instead of piping through `grep -m1`: a pipe reader that
+# stops after its first match (as -m1 does) closes the pipe while curl is
+# still writing, so curl gets SIGPIPE and exits non-zero — which, under
+# `pipefail`, fails this whole step even though the tag was already
+# parsed correctly.
+_fleet_releases="$(curl -fsSL https://api.github.com/repos/fleetdm/fleet/releases)"
+if [[ "${_fleet_releases}" =~ \"tag_name\":\ *\"(fleet-v[0-9.]+)\" ]]; then
+    _fleet_tag="${BASH_REMATCH[1]}"
+else
+    echo "Could not determine the latest fleetd release tag" >&2
+    exit 1
+fi
+_fleet_version="${_fleet_tag#fleet-v}"
+
+curl -fsSL \
+    "https://github.com/fleetdm/fleet/releases/download/${_fleet_tag}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}.tar.gz" \
+    -o "${_fleetctl_workdir}/fleetctl.tar.gz"
+tar -xzf "${_fleetctl_workdir}/fleetctl.tar.gz" -C "${_fleetctl_workdir}"
+
+# fleetctl unconditionally tries to open a REPL history file at
+# <home>/.goquery/history on startup, even for non-interactive
+# subcommands like `package`, but doesn't create the parent directory
+# itself — it fails with "no such file or directory" if that directory
+# is missing. It resolves root's home directory via the system user
+# database (getpwuid), not $HOME, so overriding $HOME for the invocation
+# doesn't help. /root is a symlink to /var/roothome in this ostree-based
+# image (like /home -> /var/home), and /var is only a build-time cache
+# mount here, so the symlink target doesn't exist yet and following it
+# to create /root/.goquery fails. Create the real target directory first
+# so the symlink resolves to a writable directory.
+mkdir -p /var/roothome
+mkdir -p /root/.goquery
+
+"${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
+    --type=rpm \
+    --outfile="${_fleetctl_workdir}/fleetd.rpm"
+
+# The RPM installs Orbit under /opt/orbit and also drops a symlink under
+# /usr/local/bin. Both /opt and /usr/local are symlinked to /var/opt and
+# /var/usrlocal respectively in this ostree-based image (standard
+# bootc/ostree convention, keeping /usr read-only), and /var is only a
+# build-time cache mount here, so neither target exists yet — the same
+# dangling-symlink problem as /root above. Without real targets, rpm's
+# cpio unpack fails trying to create files under either path ("mkdir
+# failed - File exists" / "No such file or directory" / "No data
+# available"). Create both real target directories first.
+mkdir -p /var/opt /var/usrlocal
+
+# The RPM's %post/%posttrans scriptlets fail in a container build (no
+# running init/systemd to talk to), aborting the whole dnf5 transaction.
+# Skip scriptlets entirely — this image already handles everything they
+# would have done: `systemctl enable orbit` below registers the unit,
+# and /etc/default/orbit is managed explicitly above.
+dnf5 install -y --setopt=tsflags=noscripts "${_fleetctl_workdir}/fleetd.rpm"
+
+rm -rf "${_fleetctl_workdir}"
+unset _fleetctl_workdir _fleet_releases _fleet_tag _fleet_version _fleet_arch
+
+### Preserve fleetd enrollment across bootc updates
+#
+# Orbit's systemd unit (installed by the RPM above) reads its Fleet URL
+# and enroll secret from /etc/default/orbit via EnvironmentFile, instead
+# of from values baked into the package. This image never passes a real
+# --fleet-url or --enroll-secret to `fleetctl package`, so nothing
+# meaningful ends up in that file at build time — truncate it to
+# guarantee it ships empty, matching the /etc/ipa and /etc/sssd/conf.d
+# skeletons above. Whatever an admin writes into it after deployment is
+# therefore a local addition
+# that bootc's three-way /etc merge will never overwrite.
+install -m 0644 /dev/null /etc/default/orbit
+
+# Orbit's runtime state (enroll secret cache, osqueryd DB, logs) lives
+# under /opt/orbit. Bluefin's base image already symlinks /opt to
+# /var/opt (see the /opt note near the top of the Containerfile), so this
+# is mutable and preserved across updates the same way /var/lib/sss is,
+# with no extra setup required here.
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
@@ -76,6 +187,7 @@ install -Dm644 /ctx/96-mmc-storage.conf \
 systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
+systemctl enable orbit
 
 ### Configure cosign image verification for bootc upgrades
 #
