@@ -119,7 +119,12 @@ mkdir -p /root/.goquery
 # available"). Create both real target directories first.
 mkdir -p /var/opt /var/usrlocal
 
-dnf5 install -y "${_fleetctl_workdir}/fleetd.rpm"
+# The RPM's %post/%posttrans scriptlets fail in a container build (no
+# running init/systemd to talk to), aborting the whole dnf5 transaction.
+# Skip scriptlets entirely — this image already handles everything they
+# would have done: `systemctl enable orbit` below registers the unit,
+# and /etc/default/orbit is managed explicitly above.
+dnf5 install -y --setopt=tsflags=noscripts "${_fleetctl_workdir}/fleetd.rpm"
 
 rm -rf "${_fleetctl_workdir}"
 unset _fleetctl_workdir _fleet_releases _fleet_tag _fleet_version _fleet_arch
