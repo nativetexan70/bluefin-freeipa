@@ -67,9 +67,20 @@ _fleetctl_workdir="$(mktemp -d)"
 # Resolve the latest Fleet release tag (e.g. "fleet-v4.85.0") rather than
 # pinning a version, so the agent stays current automatically as this
 # image is rebuilt.
-_fleet_tag="$(curl -fsSL https://api.github.com/repos/fleetdm/fleet/releases \
-    | grep -m1 '"tag_name"' \
-    | sed -E 's/.*"(fleet-v[0-9.]+)".*/\1/')"
+#
+# Buffer the API response into a variable and match it with bash's
+# built-in regex instead of piping through `grep -m1`: a pipe reader that
+# stops after its first match (as -m1 does) closes the pipe while curl is
+# still writing, so curl gets SIGPIPE and exits non-zero — which, under
+# `pipefail`, fails this whole step even though the tag was already
+# parsed correctly.
+_fleet_releases="$(curl -fsSL https://api.github.com/repos/fleetdm/fleet/releases)"
+if [[ "${_fleet_releases}" =~ \"tag_name\":\ *\"(fleet-v[0-9.]+)\" ]]; then
+    _fleet_tag="${BASH_REMATCH[1]}"
+else
+    echo "Could not determine the latest fleetd release tag" >&2
+    exit 1
+fi
 _fleet_version="${_fleet_tag#fleet-v}"
 
 curl -fsSL \
@@ -85,7 +96,7 @@ tar -xzf "${_fleetctl_workdir}/fleetctl.tar.gz" -C "${_fleetctl_workdir}"
 dnf5 install -y "${_fleetctl_workdir}/fleetd.rpm"
 
 rm -rf "${_fleetctl_workdir}"
-unset _fleetctl_workdir _fleet_tag _fleet_version _fleet_arch
+unset _fleetctl_workdir _fleet_releases _fleet_tag _fleet_version _fleet_arch
 
 ### Preserve fleetd enrollment across bootc updates
 #
