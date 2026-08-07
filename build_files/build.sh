@@ -89,18 +89,20 @@ curl -fsSL \
 tar -xzf "${_fleetctl_workdir}/fleetctl.tar.gz" -C "${_fleetctl_workdir}"
 
 # fleetctl unconditionally tries to open a REPL history file at
-# $HOME/.goquery/history on startup, even for non-interactive subcommands
-# like `package`, but doesn't create the parent directory itself — it
-# fails with "no such file or directory" if that directory is missing.
-# /root is a symlink to /var/roothome in this ostree-based image (like
-# /home -> /var/home), and /var is only a build-time cache mount here, so
-# the symlink target doesn't exist yet and `mkdir -p /root/...` collides
-# with the dangling symlink. Sidestep all of that by pointing $HOME at
-# our own throwaway workdir just for this invocation.
-mkdir -p "${_fleetctl_workdir}/home/.goquery"
+# <home>/.goquery/history on startup, even for non-interactive
+# subcommands like `package`, but doesn't create the parent directory
+# itself — it fails with "no such file or directory" if that directory
+# is missing. It resolves root's home directory via the system user
+# database (getpwuid), not $HOME, so overriding $HOME for the invocation
+# doesn't help. /root is a symlink to /var/roothome in this ostree-based
+# image (like /home -> /var/home), and /var is only a build-time cache
+# mount here, so the symlink target doesn't exist yet and following it
+# to create /root/.goquery fails. Create the real target directory first
+# so the symlink resolves to a writable directory.
+mkdir -p /var/roothome
+mkdir -p /root/.goquery
 
-HOME="${_fleetctl_workdir}/home" \
-    "${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
+"${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
     --type=rpm \
     --use-system-configuration \
     --outfile="${_fleetctl_workdir}/fleetd.rpm"
