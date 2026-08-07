@@ -88,7 +88,7 @@ sudo ipa-client-install --uninstall
 
 # Setting Up the Fleet Agent
 
-`fleetd` (Fleet's agent — Orbit plus osqueryd) is pre-installed, built from Fleet's `fleetctl package --use-system-configuration` so that no Fleet server URL or enroll secret is baked into the image. See [Fleet's agent configuration docs](https://fleetdm.com/docs/configuration/agent-configuration) for background on the options Orbit accepts.
+`fleetd` (Fleet's agent — Orbit plus osqueryd) is pre-installed, built from Fleet's `fleetctl package --type=rpm` with no `--fleet-url` or `--enroll-secret` passed, so no Fleet server URL or enroll secret is baked into the image. See [Fleet's agent configuration docs](https://fleetdm.com/docs/configuration/agent-configuration) for background on the options Orbit accepts.
 
 ## Enrolling
 
@@ -148,7 +148,7 @@ Runtime state (`/var/lib/sss/`, `/var/log/sssd/`) lives under `/var`, which boot
 
 Enrollment survives `bootc` updates the same way the FreeIPA join does, via the three-way `/etc` merge described above.
 
-`fleetd` is built with `fleetctl package --use-system-configuration`, so Orbit reads its Fleet URL and enroll secret from `/etc/default/orbit` at runtime instead of from values compiled into the package. This image ships that file **truncated to empty** — no server URL or secret is ever baked in — so whatever you write into it during enrollment is a local addition that bootc will never overwrite.
+`fleetd` is built with `fleetctl package --type=rpm` and no `--fleet-url`/`--enroll-secret`, so Orbit's systemd unit reads its Fleet URL and enroll secret from `/etc/default/orbit` at runtime instead of from values compiled into the package. This image ships that file **truncated to empty** — no server URL or secret is ever baked in — so whatever you write into it during enrollment is a local addition that bootc will never overwrite.
 
 Runtime state (`/opt/orbit`, backed by `/var/opt/orbit`) lives under `/var`, which bootc never modifies.
 
@@ -167,7 +167,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `freeipa-client` | Core FreeIPA client tooling (`ipa-client-install`, `ipa` CLI). Also pulls in `sssd`, `krb5-workstation`, `certmonger`, and other required dependencies. |
 | `oddjob` | D-Bus service that allows `sssd` to perform privileged operations (e.g. creating home directories) on behalf of unprivileged processes. |
 | `oddjob-mkhomedir` | PAM module and helper that automatically creates a home directory on first login for domain users. |
-| `fleet-osquery` (`fleetd`) | Fleet's agent — Orbit (osquery runtime + autoupdater) plus osqueryd. Built at image build time via `fleetctl package --use-system-configuration` with no Fleet URL or secret baked in. |
+| `fleet-osquery` (`fleetd`) | Fleet's agent — Orbit (osquery runtime + autoupdater) plus osqueryd. Built at image build time via `fleetctl package --type=rpm` with no Fleet URL or secret baked in. |
 
 ## Systemd Units Enabled
 

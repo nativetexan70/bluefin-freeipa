@@ -43,12 +43,14 @@ install -d -m 0755 /var/log/sssd
 # Fleet does not publish a generic distro package: `fleetctl package`
 # builds one per deployment, normally baking a specific --fleet-url and
 # --enroll-secret into the resulting package. This image is not tied to
-# one Fleet server, so it is packaged with --use-system-configuration
-# instead: Orbit then reads its Fleet URL and enroll secret from
-# /etc/default/orbit at runtime, rather than from values compiled into
-# the package. That mirrors ipa-client-install — enrollment happens
-# post-deployment, on the actual host, against whatever Fleet server that
-# host is meant to join.
+# one Fleet server, so those flags are omitted entirely when packaging.
+# (--use-system-configuration would express this same intent, but it's
+# only accepted for --type=pkg/msi installers, not deb/rpm.) The
+# resulting RPM's systemd unit still reads ORBIT_FLEET_URL/
+# ORBIT_ENROLL_SECRET from /etc/default/orbit at runtime via
+# EnvironmentFile, so Orbit picks up whatever config ends up there. That
+# mirrors ipa-client-install — enrollment happens post-deployment, on the
+# actual host, against whatever Fleet server that host is meant to join.
 #
 # fleetctl (the packaging CLI) is only needed here to build the RPM; it
 # is not installed into the final image.
@@ -104,7 +106,6 @@ mkdir -p /root/.goquery
 
 "${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
     --type=rpm \
-    --use-system-configuration \
     --outfile="${_fleetctl_workdir}/fleetd.rpm"
 
 dnf5 install -y "${_fleetctl_workdir}/fleetd.rpm"
@@ -114,13 +115,14 @@ unset _fleetctl_workdir _fleet_releases _fleet_tag _fleet_version _fleet_arch
 
 ### Preserve fleetd enrollment across bootc updates
 #
-# Orbit (packaged above with --use-system-configuration) reads its Fleet
-# URL and enroll secret from /etc/default/orbit instead of from values
-# baked into the package. This image never passes a real --fleet-url or
-# --enroll-secret to `fleetctl package`, so nothing meaningful ends up in
-# that file at build time — truncate it to guarantee it ships empty,
-# matching the /etc/ipa and /etc/sssd/conf.d skeletons above. Whatever an
-# admin writes into it after deployment is therefore a local addition
+# Orbit's systemd unit (installed by the RPM above) reads its Fleet URL
+# and enroll secret from /etc/default/orbit via EnvironmentFile, instead
+# of from values baked into the package. This image never passes a real
+# --fleet-url or --enroll-secret to `fleetctl package`, so nothing
+# meaningful ends up in that file at build time — truncate it to
+# guarantee it ships empty, matching the /etc/ipa and /etc/sssd/conf.d
+# skeletons above. Whatever an admin writes into it after deployment is
+# therefore a local addition
 # that bootc's three-way /etc merge will never overwrite.
 install -m 0644 /dev/null /etc/default/orbit
 
