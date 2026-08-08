@@ -67,9 +67,10 @@ rm -f /etc/modprobe.d/alsa-legacy.conf
 #      product_family and i2c modalias at runtime, so this one overlay
 #      covers many Chromebook boards, not just Tiger Lake. Install
 #      alsa-sof-firmware for the DSP firmware itself, then layer the
-#      overlay on top of the upstream UCM2 tree that alsa-ucm-conf
-#      installs.
-dnf5 install -y alsa-sof-firmware alsa-ucm-conf
+#      overlay on top of the upstream UCM2 tree that the alsa-ucm
+#      subpackage of alsa-lib installs (the Fedora package providing
+#      /usr/share/alsa/ucm2 is named "alsa-ucm", not "alsa-ucm-conf").
+dnf5 install -y alsa-sof-firmware alsa-ucm
 
 _ucm_cros_workdir="$(mktemp -d)"
 curl -fsSL \
@@ -81,7 +82,7 @@ tar -xzf "${_ucm_cros_workdir}/alsa-ucm-conf-cros.tar.gz" \
 # ucm2/ adds new card profiles (e.g. conf.d/sof-rt5682, codecs/rt1011,
 # platforms/intel-sof) that don't exist upstream; overrides/ replaces
 # upstream conf.d/<card> profiles that exist but are missing features, so
-# both are installed under alsa-ucm-conf's conf.d.
+# both are installed under alsa-ucm's conf.d.
 cp -a "${_ucm_cros_workdir}/ucm2/." /usr/share/alsa/ucm2/
 cp -a "${_ucm_cros_workdir}/overrides/." /usr/share/alsa/ucm2/conf.d/
 
