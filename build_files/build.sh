@@ -72,9 +72,10 @@ rm -f /etc/modprobe.d/alsa-legacy.conf
 #      /usr/share/alsa/ucm2 is named "alsa-ucm", not "alsa-ucm-conf").
 dnf5 install -y alsa-sof-firmware alsa-ucm
 
+# The repo's only/default branch is "standalone", not "main".
 _ucm_cros_workdir="$(mktemp -d)"
 curl -fsSL \
-    https://github.com/WeirdTreeThing/alsa-ucm-conf-cros/archive/refs/heads/main.tar.gz \
+    https://github.com/WeirdTreeThing/alsa-ucm-conf-cros/archive/refs/heads/standalone.tar.gz \
     -o "${_ucm_cros_workdir}/alsa-ucm-conf-cros.tar.gz"
 tar -xzf "${_ucm_cros_workdir}/alsa-ucm-conf-cros.tar.gz" \
     -C "${_ucm_cros_workdir}" --strip-components=1
