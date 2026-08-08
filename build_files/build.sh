@@ -37,6 +37,57 @@ install -d -m 0711 /var/lib/sss/db
 install -d -m 0755 /var/lib/sss/pipes/private
 install -d -m 0755 /var/log/sssd
 
+### Chromebook SoundWire/SOF audio support (e.g. Tiger Lake "Volteer" boards)
+#
+# Many recent Chromebooks — including Tiger Lake models such as Google's
+# Volteer family (e.g. "Lindar"/"Lillipup") — drive audio entirely through
+# Intel's SOF (Sound Open Firmware) DSP over SoundWire, with no
+# conventional HD-Audio codec. Two separate things are required for the
+# built-in speakers to work, or the desktop shows only a routeless "Dummy
+# Output" sink:
+#
+#   1. The kernel must let SOF (dsp_driver=3) or auto-detection
+#      (dsp_driver=0) claim the audio controller. Some distro images/
+#      installers ship a modprobe.d override forcing the legacy HD-Audio
+#      driver (dsp_driver=1), which prevents the SoundWire codec/amps from
+#      ever being set up — no sound card is registered at all in that case
+#      (not even at the kernel level). This image never ships such an
+#      override, but remove one defensively in case a future base-image
+#      layer introduces one.
+rm -f /etc/modprobe.d/alsa-legacy.conf
+
+#   2. Even once the card exists, WirePlumber/PipeWire import ALSA cards
+#      through the ALSA UCM (Use Case Manager) database — a card with no
+#      matching UCM profile only gets a routeless stereo-fallback node
+#      ("Dummy Output"). Upstream alsa-ucm-conf does not cover every
+#      Chromebook SOF card name (e.g. "sof-rt5682", used by Volteer boards
+#      with an RT5682 headset codec and RT1011 speaker amps over
+#      SoundWire). alsa-ucm-conf-cros is a community-maintained overlay of
+#      UCM profiles for Chromebook SOF boards — it probes DMI
+#      product_family and i2c modalias at runtime, so this one overlay
+#      covers many Chromebook boards, not just Tiger Lake. Install
+#      alsa-sof-firmware for the DSP firmware itself, then layer the
+#      overlay on top of the upstream UCM2 tree that alsa-ucm-conf
+#      installs.
+dnf5 install -y alsa-sof-firmware alsa-ucm-conf
+
+_ucm_cros_workdir="$(mktemp -d)"
+curl -fsSL \
+    https://github.com/WeirdTreeThing/alsa-ucm-conf-cros/archive/refs/heads/main.tar.gz \
+    -o "${_ucm_cros_workdir}/alsa-ucm-conf-cros.tar.gz"
+tar -xzf "${_ucm_cros_workdir}/alsa-ucm-conf-cros.tar.gz" \
+    -C "${_ucm_cros_workdir}" --strip-components=1
+
+# ucm2/ adds new card profiles (e.g. conf.d/sof-rt5682, codecs/rt1011,
+# platforms/intel-sof) that don't exist upstream; overrides/ replaces
+# upstream conf.d/<card> profiles that exist but are missing features, so
+# both are installed under alsa-ucm-conf's conf.d.
+cp -a "${_ucm_cros_workdir}/ucm2/." /usr/share/alsa/ucm2/
+cp -a "${_ucm_cros_workdir}/overrides/." /usr/share/alsa/ucm2/conf.d/
+
+rm -rf "${_ucm_cros_workdir}"
+unset _ucm_cros_workdir
+
 ### Install fleetd (Fleet's agent) — https://fleetdm.com/docs/configuration/agent-configuration
 #
 # fleetd bundles Orbit (an osquery runtime + autoupdater) and osqueryd.
