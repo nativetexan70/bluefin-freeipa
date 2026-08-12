@@ -299,29 +299,34 @@ install -Dm644 /ctx/policy.json \
 install -Dm644 /ctx/registries.d-personalcyber.yaml \
     /etc/containers/registries.d/ghcr.io-personalcyber.yaml
 
-### Universal Blue branding — replace Bluefin logos throughout
+### Branding — replace Bluefin logos throughout
 #
 # Bluefin ships logo files in three places that are visible to users:
 #
 #   1. Plymouth boot watermark (/usr/share/plymouth/themes/spinner/watermark.png)
+#      Restored to stock Fedora artwork (see below) rather than Universal
+#      Blue branding, since it's the first graphic users see when booting.
 #   2. GDM login screen logo  (/usr/share/pixmaps/fedora-gdm-logo.png)
-#      and related pixmap files
+#      and related pixmap files — Universal Blue branding
 #   3. GNOME Shell Logo Menu  (/usr/share/icons/hicolor/scalable/actions/
-#                               ublue-logo-symbolic.svg)
+#                               ublue-logo-symbolic.svg) — Universal Blue
+#      branding
 #
 # The bgrt Plymouth theme only shows bgrt-fallback.png when no UEFI firmware
 # logo is present. Switching to the spinner theme ensures the watermark is
 # always displayed regardless of hardware.
 
 # Plymouth — spinner theme watermark (shown on all hardware)
-# Plymouth renders watermark.png at native pixel size. Bluefin's original
-# watermark is 288x43px; the horizontal wordmark is rendered at 300x76 to
-# match the original scale while showing the icon+text wordmark.
-install -Dm644 /ctx/ublue-logo-watermark.png \
-    /usr/share/plymouth/themes/spinner/watermark.png
-install -Dm644 /ctx/ublue-logo-watermark.png \
+# Bluefin's base image installs generic-logos instead of fedora-logos for
+# its own bird-branded packages/files. generic-logos Conflicts: fedora-logos
+# (they both own the same paths), so swap it out to restore the real Fedora
+# artwork at that path, which is then copied onto the other two watermark
+# targets so the same Fedora graphic is shown regardless of firmware BGRT
+# logo presence or plymouth theme variant.
+dnf5 install -y --allowerasing fedora-logos
+install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
-install -Dm644 /ctx/ublue-logo-watermark.png \
+install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
     /usr/share/plymouth/themes/spinner/silverblue-watermark.png
 plymouth-set-default-theme spinner
 
