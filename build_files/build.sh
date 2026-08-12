@@ -317,12 +317,13 @@ install -Dm644 /ctx/registries.d-personalcyber.yaml \
 # always displayed regardless of hardware.
 
 # Plymouth — spinner theme watermark (shown on all hardware)
-# Bluefin's base image overwrites fedora-logos' stock watermark.png with its
-# own bird graphic. Reinstalling fedora-logos restores the genuine Fedora
-# artwork at that path, which is then copied onto the other two watermark
-# targets so the same Fedora graphic is shown regardless of firmware BGRT
-# logo presence or plymouth theme variant.
-dnf5 reinstall -y fedora-logos
+# Bluefin's base image removes fedora-logos entirely in favor of its own
+# bird-branded packages/files, so the package (and the genuine Fedora
+# watermark it ships) isn't present to begin with. Installing it restores
+# the real Fedora artwork at that path, which is then copied onto the
+# other two watermark targets so the same Fedora graphic is shown
+# regardless of firmware BGRT logo presence or plymouth theme variant.
+dnf5 install -y fedora-logos
 install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
 install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
