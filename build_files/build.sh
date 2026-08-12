@@ -380,9 +380,23 @@ fi
 
 # Rebuild the initramfs so the updated Plymouth assets and theme selection
 # are baked into the deployed boot image.
+#
+# bootc requires the kernel and initramfs to live at
+# /usr/lib/modules/<kver>/{vmlinuz,initramfs.img} — it synthesizes /boot for
+# each deployment from that location and never reads /boot out of the
+# container image itself. Plain `dracut --regenerate-all` writes to the
+# legacy /boot/initramfs-<kver>.img path instead, which bootc silently
+# ignores, so the shipped image ends up carrying the upstream Bluefin
+# initramfs (and its bird-branded Plymouth watermark) unchanged even though
+# /usr/share/plymouth was updated above. Regenerate explicitly at the path
+# bootc actually reads, for every installed kernel.
 # --no-hostonly avoids hardware-specific probing that fails in a container.
-# --regenerate-all rebuilds for every installed kernel version.
-dracut --no-hostonly --regenerate-all --force
+for _kver_dir in /usr/lib/modules/*; do
+    _kver="$(basename "${_kver_dir}")"
+    [[ -f "${_kver_dir}/vmlinuz" ]] || continue
+    dracut --no-hostonly --force "${_kver_dir}/initramfs.img" "${_kver}"
+done
+unset _kver_dir _kver
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
