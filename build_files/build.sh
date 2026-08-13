@@ -294,6 +294,18 @@ mkdir -p /var/roothome
 # on top of this anyway, the extra initramfs bytes aren't real waste.
 _boot_drivers="nvme ahci sd_mod sr_mod virtio_blk virtio_scsi usb_storage"
 
+# The "ostree" dracut module is what parses the `ostree=` kernel argument
+# and runs ostree-prepare-root to bind the actual deployment onto /sysroot
+# before switch-root. It is marked hostonly_only by dracut, so it is only
+# auto-included when dracut detects it's running on an already-booted
+# ostree host — --no-hostonly does NOT pull it in on its own, and this
+# build runs inside a plain OCI container with no such host markers.
+# Without it, /sysroot ends up as the raw physical filesystem instead of
+# the composed deployment, and switch-root fails at boot with "does not
+# seem to be an OS tree. os-release file is missing." Force it explicitly,
+# the same way 95-hibernation-resume.conf force-adds "resume".
+_boot_dracutmodules="ostree"
+
 _kver_count=0
 for _kver_dir in /usr/lib/modules/*; do
     _kver="$(basename "${_kver_dir}")"
@@ -303,13 +315,17 @@ for _kver_dir in /usr/lib/modules/*; do
     rm -f "${_tmp_initramfs}"
     dracut --no-hostonly --force --compress=zstd \
         --add-drivers "${_boot_drivers}" \
+        --add-dracutmodules "${_boot_dracutmodules}" \
         "${_tmp_initramfs}" "${_kver}"
 
     # Verify before trusting: the file must exist and be non-empty, be
     # large enough that it can't be a truncated stub (a real initramfs
     # runs many MB), parse as a valid dracut archive, and actually contain
-    # at least one storage driver capable of finding a root filesystem —
-    # structural validity alone doesn't prove the machine can boot it.
+    # at least one storage driver capable of finding a root filesystem, plus
+    # the ostree module's switch-root helper — structural validity alone
+    # doesn't prove the machine can boot it, and a machine can pass every
+    # other check here while still failing switch-root because the one
+    # module that mounts the actual deployment onto /sysroot got dropped.
     #
     # Buffer lsinitrd's listing into a variable before grepping it, rather
     # than piping straight into grep -q: grep -q exits the instant it
@@ -323,12 +339,13 @@ for _kver_dir in /usr/lib/modules/*; do
     ((_size > 1048576))
     _initramfs_listing="$(lsinitrd "${_tmp_initramfs}")"
     grep -qE "/(${_boot_drivers// /|})\.ko" <<<"${_initramfs_listing}"
+    grep -q "ostree-prepare-root" <<<"${_initramfs_listing}"
 
     mv -f "${_tmp_initramfs}" "${_kver_dir}/initramfs.img"
     _kver_count=$((_kver_count + 1))
 done
 ((_kver_count > 0))
-unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers _initramfs_listing
+unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers _boot_dracutmodules _initramfs_listing
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
