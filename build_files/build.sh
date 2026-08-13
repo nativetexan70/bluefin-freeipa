@@ -236,6 +236,15 @@ fi
 # /usr/share/plymouth was updated above. Regenerate explicitly at the path
 # bootc actually reads, for every installed kernel.
 #
+# /root is a symlink to /var/roothome in this ostree-based image (like
+# /home -> /var/home), and /var is only a build-time cache mount here, so
+# the symlink target doesn't exist yet unless something has created it.
+# dracut-install tries to snapshot /root while building the archive and
+# fails outright if the symlink dangles ("dracut-install: ERROR:
+# installing '/root'"), aborting the dracut run. Create the real target
+# directory first so the symlink resolves.
+mkdir -p /var/roothome
+#
 # --no-hostonly avoids hardware-specific probing that fails in a container.
 # Each initramfs is built to a sibling temp file and only `mv`'d onto the
 # real initramfs.img (atomic within the same filesystem) once it passes a
@@ -276,18 +285,25 @@ for _kver_dir in /usr/lib/modules/*; do
     # runs many MB), parse as a valid dracut archive, and actually contain
     # at least one storage driver capable of finding a root filesystem —
     # structural validity alone doesn't prove the machine can boot it.
+    #
+    # Buffer lsinitrd's listing into a variable before grepping it, rather
+    # than piping straight into grep -q: grep -q exits the instant it
+    # finds a match, closing its end of the pipe while lsinitrd (backed by
+    # cpio/zcat) is still writing the rest of a multi-hundred-MB listing —
+    # the same SIGPIPE-under-pipefail failure documented above for the
+    # fleetd release-tag lookup this script used to have. Capturing the
+    # full output first means grep never reads from a live pipe.
     test -s "${_tmp_initramfs}"
     _size="$(stat -c%s "${_tmp_initramfs}")"
     ((_size > 1048576))
-    lsinitrd "${_tmp_initramfs}" >/dev/null
-    lsinitrd "${_tmp_initramfs}" \
-        | grep -qE "/(${_boot_drivers// /|})\.ko"
+    _initramfs_listing="$(lsinitrd "${_tmp_initramfs}")"
+    grep -qE "/(${_boot_drivers// /|})\.ko" <<<"${_initramfs_listing}"
 
     mv -f "${_tmp_initramfs}" "${_kver_dir}/initramfs.img"
     _kver_count=$((_kver_count + 1))
 done
 ((_kver_count > 0))
-unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers
+unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers _initramfs_listing
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
