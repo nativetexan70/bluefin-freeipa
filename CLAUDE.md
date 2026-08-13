@@ -47,28 +47,6 @@ just clean                  # Remove build artifacts from output/
 
 bootc performs a three-way `/etc` merge on update: it diffs old-image `/etc` vs new-image `/etc` and applies that delta to local `/etc`. Files written by `ipa-client-install` (`sssd.conf`, `krb5.conf`, `/etc/ipa/default.conf`, etc.) are never shipped in this image, so bootc treats them as local additions and never overwrites them. The `/etc/ipa/` and `/etc/sssd/conf.d/` directories are present in the image as empty skeletons — no config content is shipped inside them.
 
-### Flatpak Inventory for Fleet/osquery
-
-osquery has no native `flatpak_packages` table (unlike `deb_packages`/`rpm_packages`), so Fleet can't see installed Flatpak apps out of the box — Bluefin's Flathub-backed Flatpak setup is otherwise invisible to Fleet's Software inventory. This image closes that gap with osquery's [Automatic Table Construction (ATC)](https://osquery.readthedocs.io/en/stable/deployment/config-server/#automatic-table-construction) feature, which exposes an arbitrary SQLite table as a normal queryable osquery table:
-
-- `build.sh` installs `/usr/libexec/flatpak-inventory.py`, a script that runs `flatpak list --app --columns=...` (the `--columns` form gives stable, script-friendly tab-separated output with no header, unlike the default human-oriented table) and rebuilds (`DROP`+`CREATE`, so removed apps disappear) a `flatpak_packages` table in `/var/lib/flatpak-inventory/flatpak.db`.
-- `flatpak-inventory.timer` (enabled by default) runs that script every 15 minutes, starting 5 minutes after boot. The script creates its own database directory at runtime (`os.makedirs`), so there's no build-time `/var` content that needs `tmpfiles.d` seeding here; the data only ever exists at runtime.
-- Only the system-wide Flatpak installation (`/var/lib/flatpak`) is covered, since the timer runs as root; per-user installs under `~/.local/share/flatpak` are not enumerated.
-- The database is inert until Fleet is told to read it. Add this to the Fleet server's `agent_options` (Controls → OS settings, or via the YAML/API config) to make `SELECT * FROM flatpak_packages` work as a live or scheduled query:
-
-  ```yaml
-  config:
-    options:
-      # ... existing options ...
-    auto_table_construction:
-      flatpak_packages:
-        query: "SELECT application, version, branch, origin, ref, installation FROM flatpak_packages"
-        path: "/var/lib/flatpak-inventory/flatpak.db"
-        columns: ["application", "version", "branch", "origin", "ref", "installation"]
-  ```
-
-  This ATC table won't appear on Fleet's Host Details **Software** tab (that view only aggregates the known built-in package tables), but it's fully queryable and can be scheduled/exported through Fleet's log pipeline like any other table.
-
 ### Chromebook SoundWire/SOF Audio Support
 
 Many recent Chromebooks — including Tiger Lake models in Google's Volteer family (e.g. Lindar/"Lillipup") — drive audio entirely through Intel's SOF DSP over SoundWire (an RT5682 headset codec plus RT1011 speaker amps, in the Volteer case), not a conventional HD-Audio codec. Without extra setup, the desktop shows only a routeless "Dummy Output" sink and the speakers are silent. Two independent fixes are needed, and `build.sh` applies both:

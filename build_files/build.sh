@@ -90,23 +90,6 @@ cp -a "${_ucm_cros_workdir}/overrides/." /usr/share/alsa/ucm2/conf.d/
 rm -rf "${_ucm_cros_workdir}"
 unset _ucm_cros_workdir
 
-### Flatpak inventory for Fleet/osquery
-#
-# osquery has no native flatpak_packages table (unlike deb_packages /
-# rpm_packages), so Fleet can't see installed Flatpak apps out of the
-# box. flatpak-inventory.py rebuilds a small SQLite database describing
-# them; a Fleet-side agent_options `auto_table_construction` entry (see
-# CLAUDE.md) then exposes that database as a normal queryable osquery
-# table. A systemd timer keeps the database current — unlike the FreeIPA
-# join state above, this data is only ever written at runtime (never
-# baked in at build time), so it needs no tmpfiles.d seeding of its own.
-install -Dm755 /ctx/flatpak-inventory.py \
-    /usr/libexec/flatpak-inventory.py
-install -Dm644 /ctx/flatpak-inventory.service \
-    /usr/lib/systemd/system/flatpak-inventory.service
-install -Dm644 /ctx/flatpak-inventory.timer \
-    /usr/lib/systemd/system/flatpak-inventory.timer
-
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
@@ -146,7 +129,6 @@ install -Dm644 /ctx/96-mmc-storage.conf \
 systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
-systemctl enable flatpak-inventory.timer
 
 ### Configure cosign image verification for bootc upgrades
 #
