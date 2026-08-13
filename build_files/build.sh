@@ -400,6 +400,22 @@ fi
 # or matches only entries without a vmlinuz, the loop body never runs, the
 # count stays 0, and the explicit check below fails the build instead of
 # silently shipping an image with a stale or missing initramfs.
+#
+# --no-hostonly alone is not enough of a guarantee: it tells dracut not to
+# prune modules based on *this build container's* hardware, but the actual
+# module set it ends up including still comes from dracut's own defaults,
+# which can vary across base-image/dracut-version bumps. A run that quietly
+# omits the storage driver a deployed machine actually needs (e.g. nvme,
+# ahci, virtio_blk) produces a file that is structurally perfect — non-empty,
+# well past the size floor, and parses fine under lsinitrd — while still
+# dropping the machine into the dracut emergency shell at boot, because it
+# can never find/mount its root filesystem. That happened here: this loop's
+# checks were purely structural and let exactly that kind of image through.
+# Force the common storage/controller drivers explicitly so the generated
+# initramfs's boot-critical coverage can't silently regress, then verify at
+# least one of them actually landed in the archive before trusting it.
+_boot_drivers="nvme ahci sd_mod sr_mod virtio_blk virtio_scsi usb_storage"
+
 _kver_count=0
 for _kver_dir in /usr/lib/modules/*; do
     _kver="$(basename "${_kver_dir}")"
@@ -407,21 +423,26 @@ for _kver_dir in /usr/lib/modules/*; do
 
     _tmp_initramfs="${_kver_dir}/initramfs.img.new"
     rm -f "${_tmp_initramfs}"
-    dracut --no-hostonly --force "${_tmp_initramfs}" "${_kver}"
+    dracut --no-hostonly --force --add-drivers "${_boot_drivers}" \
+        "${_tmp_initramfs}" "${_kver}"
 
     # Verify before trusting: the file must exist and be non-empty, be
     # large enough that it can't be a truncated stub (a real initramfs
-    # runs many MB), and parse as a valid dracut archive.
+    # runs many MB), parse as a valid dracut archive, and actually contain
+    # at least one storage driver capable of finding a root filesystem —
+    # structural validity alone doesn't prove the machine can boot it.
     test -s "${_tmp_initramfs}"
     _size="$(stat -c%s "${_tmp_initramfs}")"
     ((_size > 1048576))
     lsinitrd "${_tmp_initramfs}" >/dev/null
+    lsinitrd "${_tmp_initramfs}" \
+        | grep -qE "/(${_boot_drivers// /|})\.ko"
 
     mv -f "${_tmp_initramfs}" "${_kver_dir}/initramfs.img"
     _kver_count=$((_kver_count + 1))
 done
 ((_kver_count > 0))
-unset _kver_dir _kver _tmp_initramfs _size _kver_count
+unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
