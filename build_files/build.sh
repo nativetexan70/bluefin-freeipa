@@ -390,13 +390,38 @@ fi
 # initramfs (and its bird-branded Plymouth watermark) unchanged even though
 # /usr/share/plymouth was updated above. Regenerate explicitly at the path
 # bootc actually reads, for every installed kernel.
+#
 # --no-hostonly avoids hardware-specific probing that fails in a container.
+# Each initramfs is built to a sibling temp file and only `mv`'d onto the
+# real initramfs.img (atomic within the same filesystem) once it passes a
+# sanity check, so a partial/interrupted dracut run can never leave a
+# corrupt file at the path bootc boots from. _kver_count tracks how many
+# kernels were actually (re)built: if /usr/lib/modules/* matches nothing,
+# or matches only entries without a vmlinuz, the loop body never runs, the
+# count stays 0, and the explicit check below fails the build instead of
+# silently shipping an image with a stale or missing initramfs.
+_kver_count=0
 for _kver_dir in /usr/lib/modules/*; do
     _kver="$(basename "${_kver_dir}")"
     [[ -f "${_kver_dir}/vmlinuz" ]] || continue
-    dracut --no-hostonly --force "${_kver_dir}/initramfs.img" "${_kver}"
+
+    _tmp_initramfs="${_kver_dir}/initramfs.img.new"
+    rm -f "${_tmp_initramfs}"
+    dracut --no-hostonly --force "${_tmp_initramfs}" "${_kver}"
+
+    # Verify before trusting: the file must exist and be non-empty, be
+    # large enough that it can't be a truncated stub (a real initramfs
+    # runs many MB), and parse as a valid dracut archive.
+    test -s "${_tmp_initramfs}"
+    _size="$(stat -c%s "${_tmp_initramfs}")"
+    ((_size > 1048576))
+    lsinitrd "${_tmp_initramfs}" >/dev/null
+
+    mv -f "${_tmp_initramfs}" "${_kver_dir}/initramfs.img"
+    _kver_count=$((_kver_count + 1))
 done
-unset _kver_dir _kver
+((_kver_count > 0))
+unset _kver_dir _kver _tmp_initramfs _size _kver_count
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
