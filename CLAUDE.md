@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repository Is
 
-A custom [bootc](https://github.com/bootc-dev/bootc) OCI image layered on top of `ghcr.io/ublue-os/bluefin:stable` (a Universal Blue image), adding FreeIPA client support and the [Fleet](https://fleetdm.com) agent (`fleetd`). Images are built via GitHub Actions and published to `ghcr.io/personalcyber/bluefin-freeipa`. The image is designed so that a FreeIPA domain join and a Fleet enrollment both survive `bootc` updates via bootc's three-way `/etc` merge.
+A custom [bootc](https://github.com/bootc-dev/bootc) OCI image layered on top of `ghcr.io/ublue-os/bluefin:stable` (a Universal Blue image), adding FreeIPA client support. Images are built via GitHub Actions and published to `ghcr.io/personalcyber/bluefin-freeipa`. The image is designed so that a FreeIPA domain join survives `bootc` updates via bootc's three-way `/etc` merge.
 
 ## Common Commands
 
@@ -31,7 +31,7 @@ just clean                  # Remove build artifacts from output/
 ### Build Pipeline
 
 1. **`Containerfile`** — Two-stage build: a scratch `ctx` stage copies `build_files/` (making scripts available without embedding them in the final layer). The base image is `ghcr.io/ublue-os/bluefin:stable`. After the main `RUN` step, a `COPY` instruction ships an empty `/etc/hostname` (see Hostname Preservation below). Ends with `bootc container lint`.
-2. **`build_files/build.sh`** — Executed during the container build (`RUN /ctx/build.sh`). Installs `freeipa-client`, `oddjob`, `oddjob-mkhomedir`; creates `/etc/ipa/` and `/etc/sssd/conf.d/` directory skeletons; pre-creates `/var/lib/sss/` and `/var/log/sssd/`; builds and installs `fleetd` (Fleet's agent) via `fleetctl package --type=rpm` (no `--fleet-url`/`--enroll-secret`) and truncates `/etc/default/orbit` to empty; enables `sssd`, `oddjobd`, `podman.socket`, and `orbit`. Runs with `set -ouex pipefail`.
+2. **`build_files/build.sh`** — Executed during the container build (`RUN /ctx/build.sh`). Installs `freeipa-client`, `oddjob`, `oddjob-mkhomedir`; creates `/etc/ipa/` and `/etc/sssd/conf.d/` directory skeletons; pre-creates `/var/lib/sss/` and `/var/log/sssd/`; enables `sssd`, `oddjobd`, and `podman.socket`. Runs with `set -ouex pipefail`.
 3. **`build_files/hostname`** — Empty file copied to `/etc/hostname` in the image via `COPY`. Must remain empty.
 4. **GitHub Actions (`build.yml`)** — Triggers on push to `main`, PRs, and daily schedule. Builds with `buildah`, pushes to GHCR only on non-PR pushes to the default branch, signs with Cosign using `SIGNING_SECRET`.
 5. **GitHub Actions (`build-disk.yml`)** — Manually triggered workflow producing `qcow2`, `anaconda-iso-gnome`, and `anaconda-iso-kde` disk images from the published OCI image using `bootc-image-builder`. Can optionally upload to S3.
@@ -46,34 +46,6 @@ just clean                  # Remove build artifacts from output/
 ### FreeIPA Join Persistence
 
 bootc performs a three-way `/etc` merge on update: it diffs old-image `/etc` vs new-image `/etc` and applies that delta to local `/etc`. Files written by `ipa-client-install` (`sssd.conf`, `krb5.conf`, `/etc/ipa/default.conf`, etc.) are never shipped in this image, so bootc treats them as local additions and never overwrites them. The `/etc/ipa/` and `/etc/sssd/conf.d/` directories are present in the image as empty skeletons — no config content is shipped inside them.
-
-### Fleet Agent Persistence
-
-`fleetd` (Orbit + osqueryd) is built in `build.sh` via `fleetctl package --type=rpm`, with no `--fleet-url`/`--enroll-secret` passed (`--use-system-configuration` expresses the same intent but is only accepted for `--type=pkg`/`msi`), which produces an RPM that does not have a Fleet URL or enroll secret compiled in. Instead, Orbit's systemd unit reads `ORBIT_FLEET_URL`/`ORBIT_ENROLL_SECRET` (and related settings, e.g. `ORBIT_FLEET_DESKTOP`, `ORBIT_ENABLE_SCRIPTS`, `ORBIT_INSECURE`) from `/etc/default/orbit` via `EnvironmentFile` at runtime. `build.sh` truncates that file to empty after installing the package, so the same three-way `/etc` merge that protects the FreeIPA join protects Fleet enrollment: whatever an admin writes into `/etc/default/orbit` post-deployment is a local addition bootc never overwrites.
-
-Orbit's binaries install under `/opt/orbit` and `/usr/local/bin/orbit`, both of which resolve through symlinks to `/var/opt` and `/var/usrlocal` in this ostree-based image. Unlike `/etc`, bootc/ostree do **not** carry `/var` file content from the container image onto a deployed system — only `/usr` and the three-way-merged `/etc` get checked out. Content the RPM writes under `/var` at build time is baked into the OCI layer but never applied to a deployed host's `/var`, which surfaces at runtime as `orbit.service` failing with `status=203/EXEC` ("Unable to locate executable '/opt/orbit/bin/orbit/orbit'") even though `rpm -ql fleet-osquery` still lists the path (rpmdb lives under `/usr`, which *is* shipped). `build.sh` works around this by relocating the real payload into `/usr/lib/orbit-seed` (real, shipped `/usr` content) and shipping a `systemd-tmpfiles.d` snippet (`/usr/lib/tmpfiles.d/orbit-seed.conf`) that copies it into `/opt/orbit` and `/usr/local/bin/orbit` on first boot. tmpfiles' `C` copy only fires when the destination is missing, so it seeds once per host and never clobbers state Orbit's own TUF autoupdater later writes into `/opt/orbit`.
-
-### Flatpak Inventory for Fleet/osquery
-
-osquery has no native `flatpak_packages` table (unlike `deb_packages`/`rpm_packages`), so Fleet can't see installed Flatpak apps out of the box — Bluefin's Flathub-backed Flatpak setup is otherwise invisible to Fleet's Software inventory. This image closes that gap with osquery's [Automatic Table Construction (ATC)](https://osquery.readthedocs.io/en/stable/deployment/config-server/#automatic-table-construction) feature, which exposes an arbitrary SQLite table as a normal queryable osquery table:
-
-- `build.sh` installs `/usr/libexec/flatpak-inventory.py`, a script that runs `flatpak list --app --columns=...` (the `--columns` form gives stable, script-friendly tab-separated output with no header, unlike the default human-oriented table) and rebuilds (`DROP`+`CREATE`, so removed apps disappear) a `flatpak_packages` table in `/var/lib/flatpak-inventory/flatpak.db`.
-- `flatpak-inventory.timer` (enabled by default) runs that script every 15 minutes, starting 5 minutes after boot. The script creates its own database directory at runtime (`os.makedirs`), so — unlike Orbit's `/opt` payload — there's no build-time `/var` content that needs `tmpfiles.d` seeding here; the data only ever exists at runtime.
-- Only the system-wide Flatpak installation (`/var/lib/flatpak`) is covered, since the timer runs as root; per-user installs under `~/.local/share/flatpak` are not enumerated.
-- The database is inert until Fleet is told to read it. Add this to the Fleet server's `agent_options` (Controls → OS settings, or via the YAML/API config) to make `SELECT * FROM flatpak_packages` work as a live or scheduled query:
-
-  ```yaml
-  config:
-    options:
-      # ... existing options ...
-    auto_table_construction:
-      flatpak_packages:
-        query: "SELECT application, version, branch, origin, ref, installation FROM flatpak_packages"
-        path: "/var/lib/flatpak-inventory/flatpak.db"
-        columns: ["application", "version", "branch", "origin", "ref", "installation"]
-  ```
-
-  This ATC table won't appear on Fleet's Host Details **Software** tab (that view only aggregates the known built-in package tables), but it's fully queryable and can be scheduled/exported through Fleet's log pipeline like any other table.
 
 ### Chromebook SoundWire/SOF Audio Support
 

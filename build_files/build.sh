@@ -4,6 +4,12 @@ set -ouex pipefail
 
 ### Install packages
 
+# All packages this image needs are installed in a single transaction
+# rather than spread across several `dnf5 install` calls, each of which
+# pays its own repo-metadata-load/depsolve/transaction-check overhead.
+# Nothing between here and where these packages are used depends on a
+# partially-installed state, so there's no ordering reason to split them.
+#
 # freeipa-client pulls in sssd, krb5-workstation, certmonger, and other
 # required dependencies automatically.
 #
@@ -11,11 +17,24 @@ set -ouex pipefail
 # `ujust setup-hibernation` to persistently label the hibernation swapfile
 # swapfile_t (systemd's boot-time swapon is denied by SELinux on the
 # default var_t label).
-dnf5 install -y \
+#
+# alsa-sof-firmware/alsa-ucm are for Chromebook SoundWire/SOF audio
+# support (see below); fedora-logos restores stock Fedora branding (see
+# "Branding" below); zstd is the compressor the initramfs regeneration
+# below asks dracut to use, listed explicitly rather than assumed present.
+# --allowerasing is required for fedora-logos, which conflicts with
+# generic-logos (the Bluefin base image's replacement for it) — it only
+# erases packages that actually conflict, so it's safe to apply to the
+# whole transaction rather than isolating it to just that one package.
+dnf5 install -y --allowerasing \
     freeipa-client \
     oddjob \
     oddjob-mkhomedir \
-    policycoreutils-python-utils
+    policycoreutils-python-utils \
+    alsa-sof-firmware \
+    alsa-ucm \
+    fedora-logos \
+    zstd
 
 ### Preserve FreeIPA join state across bootc updates
 #
@@ -65,12 +84,11 @@ rm -f /etc/modprobe.d/alsa-legacy.conf
 #      SoundWire). alsa-ucm-conf-cros is a community-maintained overlay of
 #      UCM profiles for Chromebook SOF boards — it probes DMI
 #      product_family and i2c modalias at runtime, so this one overlay
-#      covers many Chromebook boards, not just Tiger Lake. Install
-#      alsa-sof-firmware for the DSP firmware itself, then layer the
-#      overlay on top of the upstream UCM2 tree that the alsa-ucm
-#      subpackage of alsa-lib installs (the Fedora package providing
-#      /usr/share/alsa/ucm2 is named "alsa-ucm", not "alsa-ucm-conf").
-dnf5 install -y alsa-sof-firmware alsa-ucm
+#      covers many Chromebook boards, not just Tiger Lake. alsa-sof-firmware
+#      (the DSP firmware) and alsa-ucm (the Fedora package providing
+#      /usr/share/alsa/ucm2 — not "alsa-ucm-conf") are installed in the
+#      single combined transaction above; the overlay layers on top of the
+#      upstream UCM2 tree that alsa-ucm installs.
 
 # The repo's only/default branch is "standalone", not "main".
 _ucm_cros_workdir="$(mktemp -d)"
@@ -89,159 +107,6 @@ cp -a "${_ucm_cros_workdir}/overrides/." /usr/share/alsa/ucm2/conf.d/
 
 rm -rf "${_ucm_cros_workdir}"
 unset _ucm_cros_workdir
-
-### Install fleetd (Fleet's agent) — https://fleetdm.com/docs/configuration/agent-configuration
-#
-# fleetd bundles Orbit (an osquery runtime + autoupdater) and osqueryd.
-# Fleet does not publish a generic distro package: `fleetctl package`
-# builds one per deployment, normally baking a specific --fleet-url and
-# --enroll-secret into the resulting package. This image is not tied to
-# one Fleet server, so those flags are omitted entirely when packaging.
-# (--use-system-configuration would express this same intent, but it's
-# only accepted for --type=pkg/msi installers, not deb/rpm.) The
-# resulting RPM's systemd unit still reads ORBIT_FLEET_URL/
-# ORBIT_ENROLL_SECRET from /etc/default/orbit at runtime via
-# EnvironmentFile, so Orbit picks up whatever config ends up there. That
-# mirrors ipa-client-install — enrollment happens post-deployment, on the
-# actual host, against whatever Fleet server that host is meant to join.
-#
-# fleetctl (the packaging CLI) is only needed here to build the RPM; it
-# is not installed into the final image.
-
-case "$(uname -m)" in
-    x86_64) _fleet_arch="amd64" ;;
-    aarch64) _fleet_arch="arm64" ;;
-    *)
-        echo "Unsupported architecture for fleetd: $(uname -m)" >&2
-        exit 1
-        ;;
-esac
-
-_fleetctl_workdir="$(mktemp -d)"
-
-# Resolve the latest Fleet release tag (e.g. "fleet-v4.85.0") rather than
-# pinning a version, so the agent stays current automatically as this
-# image is rebuilt.
-#
-# Buffer the API response into a variable and match it with bash's
-# built-in regex instead of piping through `grep -m1`: a pipe reader that
-# stops after its first match (as -m1 does) closes the pipe while curl is
-# still writing, so curl gets SIGPIPE and exits non-zero — which, under
-# `pipefail`, fails this whole step even though the tag was already
-# parsed correctly.
-_fleet_releases="$(curl -fsSL https://api.github.com/repos/fleetdm/fleet/releases)"
-if [[ "${_fleet_releases}" =~ \"tag_name\":\ *\"(fleet-v[0-9.]+)\" ]]; then
-    _fleet_tag="${BASH_REMATCH[1]}"
-else
-    echo "Could not determine the latest fleetd release tag" >&2
-    exit 1
-fi
-_fleet_version="${_fleet_tag#fleet-v}"
-
-curl -fsSL \
-    "https://github.com/fleetdm/fleet/releases/download/${_fleet_tag}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}.tar.gz" \
-    -o "${_fleetctl_workdir}/fleetctl.tar.gz"
-tar -xzf "${_fleetctl_workdir}/fleetctl.tar.gz" -C "${_fleetctl_workdir}"
-
-# fleetctl unconditionally tries to open a REPL history file at
-# <home>/.goquery/history on startup, even for non-interactive
-# subcommands like `package`, but doesn't create the parent directory
-# itself — it fails with "no such file or directory" if that directory
-# is missing. It resolves root's home directory via the system user
-# database (getpwuid), not $HOME, so overriding $HOME for the invocation
-# doesn't help. /root is a symlink to /var/roothome in this ostree-based
-# image (like /home -> /var/home), and /var is only a build-time cache
-# mount here, so the symlink target doesn't exist yet and following it
-# to create /root/.goquery fails. Create the real target directory first
-# so the symlink resolves to a writable directory.
-mkdir -p /var/roothome
-mkdir -p /root/.goquery
-
-"${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
-    --type=rpm \
-    --outfile="${_fleetctl_workdir}/fleetd.rpm"
-
-# The RPM installs Orbit under /opt/orbit and also drops a symlink under
-# /usr/local/bin. Both /opt and /usr/local are symlinked to /var/opt and
-# /var/usrlocal respectively in this ostree-based image (standard
-# bootc/ostree convention, keeping /usr read-only), and /var is only a
-# build-time cache mount here, so neither target exists yet — the same
-# dangling-symlink problem as /root above. Without real targets, rpm's
-# cpio unpack fails trying to create files under either path ("mkdir
-# failed - File exists" / "No such file or directory" / "No data
-# available"). Create both real target directories first.
-mkdir -p /var/opt /var/usrlocal
-
-# The RPM's %post/%posttrans scriptlets fail in a container build (no
-# running init/systemd to talk to), aborting the whole dnf5 transaction.
-# Skip scriptlets entirely — this image already handles everything they
-# would have done: `systemctl enable orbit` below registers the unit,
-# and /etc/default/orbit is managed explicitly above.
-dnf5 install -y --setopt=tsflags=noscripts "${_fleetctl_workdir}/fleetd.rpm"
-
-rm -rf "${_fleetctl_workdir}"
-unset _fleetctl_workdir _fleet_releases _fleet_tag _fleet_version _fleet_arch
-
-### Preserve fleetd enrollment across bootc updates
-#
-# Orbit's systemd unit (installed by the RPM above) reads its Fleet URL
-# and enroll secret from /etc/default/orbit via EnvironmentFile, instead
-# of from values baked into the package. This image never passes a real
-# --fleet-url or --enroll-secret to `fleetctl package`, so nothing
-# meaningful ends up in that file at build time — truncate it to
-# guarantee it ships empty, matching the /etc/ipa and /etc/sssd/conf.d
-# skeletons above. Whatever an admin writes into it after deployment is
-# therefore a local addition
-# that bootc's three-way /etc merge will never overwrite.
-install -m 0644 /dev/null /etc/default/orbit
-
-### Seed Orbit's /opt and /usr/local payload at first boot via tmpfiles.d
-#
-# The RPM installed above writes orbit/osqueryd under /opt/orbit and a
-# launcher under /usr/local/bin/orbit. Both /opt and /usr/local are
-# symlinked to /var/opt and /var/usrlocal in this ostree-based image (see
-# the /opt note near the top of the Containerfile), and bootc/ostree only
-# check out /usr and the three-way-merged /etc onto a deployed system —
-# file content written under /var during this build is baked into the
-# OCI layer but never applied to a deployed host's /var beyond the very
-# first stateroot init. In practice this means orbit.service fails at
-# runtime with "status=203/EXEC ... Unable to locate executable
-# '/opt/orbit/bin/orbit/orbit'" even though `rpm -ql fleet-osquery` still
-# lists the path — rpm's metadata lives under /usr (shipped), but the
-# binaries it points at were only ever written under /var (not shipped).
-#
-# Fix: relocate the real payload into /usr/lib/orbit-seed (real /usr
-# content, so it IS shipped and versioned with the image), then install a
-# systemd-tmpfiles.d snippet that copies it into place under /opt/orbit
-# and /usr/local/bin/orbit on first boot. tmpfiles' `C` line type only
-# copies when the destination doesn't already exist, so this seeds once
-# per host and never clobbers state Orbit's own TUF autoupdater later
-# writes into /opt/orbit (osqueryd DB, downloaded updates, etc.).
-mkdir -p /usr/lib/orbit-seed/opt /usr/lib/orbit-seed/usr-local-bin
-mv /var/opt/orbit /usr/lib/orbit-seed/opt/orbit
-mv /var/usrlocal/bin/orbit /usr/lib/orbit-seed/usr-local-bin/orbit
-
-install -Dm644 /ctx/orbit-seed.conf \
-    /usr/lib/tmpfiles.d/orbit-seed.conf
-
-### Flatpak inventory for Fleet/osquery
-#
-# osquery has no native flatpak_packages table (unlike deb_packages /
-# rpm_packages), so Fleet can't see installed Flatpak apps out of the
-# box. flatpak-inventory.py rebuilds a small SQLite database describing
-# them; a Fleet-side agent_options `auto_table_construction` entry (see
-# CLAUDE.md) then exposes that database as a normal queryable osquery
-# table. A systemd timer keeps the database current — unlike the FreeIPA/
-# Fleet enrollment state above, this data is only ever written at
-# runtime (never baked in at build time), so it isn't subject to the
-# /var-content-isn't-shipped problem documented for Orbit and needs no
-# tmpfiles.d seeding of its own.
-install -Dm755 /ctx/flatpak-inventory.py \
-    /usr/libexec/flatpak-inventory.py
-install -Dm644 /ctx/flatpak-inventory.service \
-    /usr/lib/systemd/system/flatpak-inventory.service
-install -Dm644 /ctx/flatpak-inventory.timer \
-    /usr/lib/systemd/system/flatpak-inventory.timer
 
 ### Ship custom ujust recipes
 #
@@ -282,8 +147,6 @@ install -Dm644 /ctx/96-mmc-storage.conf \
 systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
-systemctl enable orbit
-systemctl enable flatpak-inventory.timer
 
 ### Configure cosign image verification for bootc upgrades
 #
@@ -319,11 +182,11 @@ install -Dm644 /ctx/registries.d-personalcyber.yaml \
 # Plymouth — spinner theme watermark (shown on all hardware)
 # Bluefin's base image installs generic-logos instead of fedora-logos for
 # its own bird-branded packages/files. generic-logos Conflicts: fedora-logos
-# (they both own the same paths), so swap it out to restore the real Fedora
+# (they both own the same paths), so it was erased in favor of fedora-logos
+# by the combined --allowerasing install above, restoring the real Fedora
 # artwork at that path, which is then copied onto the other two watermark
 # targets so the same Fedora graphic is shown regardless of firmware BGRT
 # logo presence or plymouth theme variant.
-dnf5 install -y --allowerasing fedora-logos
 install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
 install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
@@ -391,6 +254,15 @@ fi
 # /usr/share/plymouth was updated above. Regenerate explicitly at the path
 # bootc actually reads, for every installed kernel.
 #
+# /root is a symlink to /var/roothome in this ostree-based image (like
+# /home -> /var/home), and /var is only a build-time cache mount here, so
+# the symlink target doesn't exist yet unless something has created it.
+# dracut-install tries to snapshot /root while building the archive and
+# fails outright if the symlink dangles ("dracut-install: ERROR:
+# installing '/root'"), aborting the dracut run. Create the real target
+# directory first so the symlink resolves.
+mkdir -p /var/roothome
+#
 # --no-hostonly avoids hardware-specific probing that fails in a container.
 # Each initramfs is built to a sibling temp file and only `mv`'d onto the
 # real initramfs.img (atomic within the same filesystem) once it passes a
@@ -400,6 +272,28 @@ fi
 # or matches only entries without a vmlinuz, the loop body never runs, the
 # count stays 0, and the explicit check below fails the build instead of
 # silently shipping an image with a stale or missing initramfs.
+#
+# --no-hostonly alone is not enough of a guarantee: it tells dracut not to
+# prune modules based on *this build container's* hardware, but the actual
+# module set it ends up including still comes from dracut's own defaults,
+# which can vary across base-image/dracut-version bumps. A run that quietly
+# omits the storage driver a deployed machine actually needs (e.g. nvme,
+# ahci, virtio_blk) produces a file that is structurally perfect — non-empty,
+# well past the size floor, and parses fine under lsinitrd — while still
+# dropping the machine into the dracut emergency shell at boot, because it
+# can never find/mount its root filesystem. That happened here: this loop's
+# checks were purely structural and let exactly that kind of image through.
+# Force the common storage/controller drivers explicitly so the generated
+# initramfs's boot-critical coverage can't silently regress, then verify at
+# least one of them actually landed in the archive before trusting it.
+#
+# --compress=zstd: dracut defaults to xz, which optimizes for ratio over
+# speed and is the dominant cost of this loop (observed taking tens of
+# seconds per kernel in CI). zstd compresses much faster for a modest
+# size increase, and since bootc/ostree re-compresses the whole OCI layer
+# on top of this anyway, the extra initramfs bytes aren't real waste.
+_boot_drivers="nvme ahci sd_mod sr_mod virtio_blk virtio_scsi usb_storage"
+
 _kver_count=0
 for _kver_dir in /usr/lib/modules/*; do
     _kver="$(basename "${_kver_dir}")"
@@ -407,21 +301,34 @@ for _kver_dir in /usr/lib/modules/*; do
 
     _tmp_initramfs="${_kver_dir}/initramfs.img.new"
     rm -f "${_tmp_initramfs}"
-    dracut --no-hostonly --force "${_tmp_initramfs}" "${_kver}"
+    dracut --no-hostonly --force --compress=zstd \
+        --add-drivers "${_boot_drivers}" \
+        "${_tmp_initramfs}" "${_kver}"
 
     # Verify before trusting: the file must exist and be non-empty, be
     # large enough that it can't be a truncated stub (a real initramfs
-    # runs many MB), and parse as a valid dracut archive.
+    # runs many MB), parse as a valid dracut archive, and actually contain
+    # at least one storage driver capable of finding a root filesystem —
+    # structural validity alone doesn't prove the machine can boot it.
+    #
+    # Buffer lsinitrd's listing into a variable before grepping it, rather
+    # than piping straight into grep -q: grep -q exits the instant it
+    # finds a match, closing its end of the pipe while lsinitrd (backed by
+    # cpio/zcat) is still writing the rest of a multi-hundred-MB listing —
+    # the same SIGPIPE-under-pipefail failure documented above for the
+    # fleetd release-tag lookup this script used to have. Capturing the
+    # full output first means grep never reads from a live pipe.
     test -s "${_tmp_initramfs}"
     _size="$(stat -c%s "${_tmp_initramfs}")"
     ((_size > 1048576))
-    lsinitrd "${_tmp_initramfs}" >/dev/null
+    _initramfs_listing="$(lsinitrd "${_tmp_initramfs}")"
+    grep -qE "/(${_boot_drivers// /|})\.ko" <<<"${_initramfs_listing}"
 
     mv -f "${_tmp_initramfs}" "${_kver_dir}/initramfs.img"
     _kver_count=$((_kver_count + 1))
 done
 ((_kver_count > 0))
-unset _kver_dir _kver _tmp_initramfs _size _kver_count
+unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers _initramfs_listing
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
