@@ -4,6 +4,12 @@ set -ouex pipefail
 
 ### Install packages
 
+# All packages this image needs are installed in a single transaction
+# rather than spread across several `dnf5 install` calls, each of which
+# pays its own repo-metadata-load/depsolve/transaction-check overhead.
+# Nothing between here and where these packages are used depends on a
+# partially-installed state, so there's no ordering reason to split them.
+#
 # freeipa-client pulls in sssd, krb5-workstation, certmonger, and other
 # required dependencies automatically.
 #
@@ -11,11 +17,24 @@ set -ouex pipefail
 # `ujust setup-hibernation` to persistently label the hibernation swapfile
 # swapfile_t (systemd's boot-time swapon is denied by SELinux on the
 # default var_t label).
-dnf5 install -y \
+#
+# alsa-sof-firmware/alsa-ucm are for Chromebook SoundWire/SOF audio
+# support (see below); fedora-logos restores stock Fedora branding (see
+# "Branding" below); zstd is the compressor the initramfs regeneration
+# below asks dracut to use, listed explicitly rather than assumed present.
+# --allowerasing is required for fedora-logos, which conflicts with
+# generic-logos (the Bluefin base image's replacement for it) — it only
+# erases packages that actually conflict, so it's safe to apply to the
+# whole transaction rather than isolating it to just that one package.
+dnf5 install -y --allowerasing \
     freeipa-client \
     oddjob \
     oddjob-mkhomedir \
-    policycoreutils-python-utils
+    policycoreutils-python-utils \
+    alsa-sof-firmware \
+    alsa-ucm \
+    fedora-logos \
+    zstd
 
 ### Preserve FreeIPA join state across bootc updates
 #
@@ -65,12 +84,11 @@ rm -f /etc/modprobe.d/alsa-legacy.conf
 #      SoundWire). alsa-ucm-conf-cros is a community-maintained overlay of
 #      UCM profiles for Chromebook SOF boards — it probes DMI
 #      product_family and i2c modalias at runtime, so this one overlay
-#      covers many Chromebook boards, not just Tiger Lake. Install
-#      alsa-sof-firmware for the DSP firmware itself, then layer the
-#      overlay on top of the upstream UCM2 tree that the alsa-ucm
-#      subpackage of alsa-lib installs (the Fedora package providing
-#      /usr/share/alsa/ucm2 is named "alsa-ucm", not "alsa-ucm-conf").
-dnf5 install -y alsa-sof-firmware alsa-ucm
+#      covers many Chromebook boards, not just Tiger Lake. alsa-sof-firmware
+#      (the DSP firmware) and alsa-ucm (the Fedora package providing
+#      /usr/share/alsa/ucm2 — not "alsa-ucm-conf") are installed in the
+#      single combined transaction above; the overlay layers on top of the
+#      upstream UCM2 tree that alsa-ucm installs.
 
 # The repo's only/default branch is "standalone", not "main".
 _ucm_cros_workdir="$(mktemp -d)"
@@ -164,11 +182,11 @@ install -Dm644 /ctx/registries.d-personalcyber.yaml \
 # Plymouth — spinner theme watermark (shown on all hardware)
 # Bluefin's base image installs generic-logos instead of fedora-logos for
 # its own bird-branded packages/files. generic-logos Conflicts: fedora-logos
-# (they both own the same paths), so swap it out to restore the real Fedora
+# (they both own the same paths), so it was erased in favor of fedora-logos
+# by the combined --allowerasing install above, restoring the real Fedora
 # artwork at that path, which is then copied onto the other two watermark
 # targets so the same Fedora graphic is shown regardless of firmware BGRT
 # logo presence or plymouth theme variant.
-dnf5 install -y --allowerasing fedora-logos
 install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
     /usr/share/plymouth/themes/spinner/bgrt-fallback.png
 install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
@@ -268,6 +286,12 @@ mkdir -p /var/roothome
 # Force the common storage/controller drivers explicitly so the generated
 # initramfs's boot-critical coverage can't silently regress, then verify at
 # least one of them actually landed in the archive before trusting it.
+#
+# --compress=zstd: dracut defaults to xz, which optimizes for ratio over
+# speed and is the dominant cost of this loop (observed taking tens of
+# seconds per kernel in CI). zstd compresses much faster for a modest
+# size increase, and since bootc/ostree re-compresses the whole OCI layer
+# on top of this anyway, the extra initramfs bytes aren't real waste.
 _boot_drivers="nvme ahci sd_mod sr_mod virtio_blk virtio_scsi usb_storage"
 
 _kver_count=0
@@ -277,7 +301,8 @@ for _kver_dir in /usr/lib/modules/*; do
 
     _tmp_initramfs="${_kver_dir}/initramfs.img.new"
     rm -f "${_tmp_initramfs}"
-    dracut --no-hostonly --force --add-drivers "${_boot_drivers}" \
+    dracut --no-hostonly --force --compress=zstd \
+        --add-drivers "${_boot_drivers}" \
         "${_tmp_initramfs}" "${_kver}"
 
     # Verify before trusting: the file must exist and be non-empty, be
