@@ -90,140 +90,6 @@ cp -a "${_ucm_cros_workdir}/overrides/." /usr/share/alsa/ucm2/conf.d/
 rm -rf "${_ucm_cros_workdir}"
 unset _ucm_cros_workdir
 
-### Install fleetd (Fleet's agent) — https://fleetdm.com/docs/configuration/agent-configuration
-#
-# fleetd bundles Orbit (an osquery runtime + autoupdater) and osqueryd.
-# Fleet does not publish a generic distro package: `fleetctl package`
-# builds one per deployment, normally baking a specific --fleet-url and
-# --enroll-secret into the resulting package. This image is not tied to
-# one Fleet server, so those flags are omitted entirely when packaging.
-# (--use-system-configuration would express this same intent, but it's
-# only accepted for --type=pkg/msi installers, not deb/rpm.) The
-# resulting RPM's systemd unit still reads ORBIT_FLEET_URL/
-# ORBIT_ENROLL_SECRET from /etc/default/orbit at runtime via
-# EnvironmentFile, so Orbit picks up whatever config ends up there. That
-# mirrors ipa-client-install — enrollment happens post-deployment, on the
-# actual host, against whatever Fleet server that host is meant to join.
-#
-# fleetctl (the packaging CLI) is only needed here to build the RPM; it
-# is not installed into the final image.
-
-case "$(uname -m)" in
-    x86_64) _fleet_arch="amd64" ;;
-    aarch64) _fleet_arch="arm64" ;;
-    *)
-        echo "Unsupported architecture for fleetd: $(uname -m)" >&2
-        exit 1
-        ;;
-esac
-
-_fleetctl_workdir="$(mktemp -d)"
-
-# Resolve the latest Fleet release tag (e.g. "fleet-v4.85.0") rather than
-# pinning a version, so the agent stays current automatically as this
-# image is rebuilt.
-#
-# Buffer the API response into a variable and match it with bash's
-# built-in regex instead of piping through `grep -m1`: a pipe reader that
-# stops after its first match (as -m1 does) closes the pipe while curl is
-# still writing, so curl gets SIGPIPE and exits non-zero — which, under
-# `pipefail`, fails this whole step even though the tag was already
-# parsed correctly.
-_fleet_releases="$(curl -fsSL https://api.github.com/repos/fleetdm/fleet/releases)"
-if [[ "${_fleet_releases}" =~ \"tag_name\":\ *\"(fleet-v[0-9.]+)\" ]]; then
-    _fleet_tag="${BASH_REMATCH[1]}"
-else
-    echo "Could not determine the latest fleetd release tag" >&2
-    exit 1
-fi
-_fleet_version="${_fleet_tag#fleet-v}"
-
-curl -fsSL \
-    "https://github.com/fleetdm/fleet/releases/download/${_fleet_tag}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}.tar.gz" \
-    -o "${_fleetctl_workdir}/fleetctl.tar.gz"
-tar -xzf "${_fleetctl_workdir}/fleetctl.tar.gz" -C "${_fleetctl_workdir}"
-
-# fleetctl unconditionally tries to open a REPL history file at
-# <home>/.goquery/history on startup, even for non-interactive
-# subcommands like `package`, but doesn't create the parent directory
-# itself — it fails with "no such file or directory" if that directory
-# is missing. It resolves root's home directory via the system user
-# database (getpwuid), not $HOME, so overriding $HOME for the invocation
-# doesn't help. /root is a symlink to /var/roothome in this ostree-based
-# image (like /home -> /var/home), and /var is only a build-time cache
-# mount here, so the symlink target doesn't exist yet and following it
-# to create /root/.goquery fails. Create the real target directory first
-# so the symlink resolves to a writable directory.
-mkdir -p /var/roothome
-mkdir -p /root/.goquery
-
-"${_fleetctl_workdir}/fleetctl_v${_fleet_version}_linux_${_fleet_arch}/fleetctl" package \
-    --type=rpm \
-    --outfile="${_fleetctl_workdir}/fleetd.rpm"
-
-# The RPM installs Orbit under /opt/orbit and also drops a symlink under
-# /usr/local/bin. Both /opt and /usr/local are symlinked to /var/opt and
-# /var/usrlocal respectively in this ostree-based image (standard
-# bootc/ostree convention, keeping /usr read-only), and /var is only a
-# build-time cache mount here, so neither target exists yet — the same
-# dangling-symlink problem as /root above. Without real targets, rpm's
-# cpio unpack fails trying to create files under either path ("mkdir
-# failed - File exists" / "No such file or directory" / "No data
-# available"). Create both real target directories first.
-mkdir -p /var/opt /var/usrlocal
-
-# The RPM's %post/%posttrans scriptlets fail in a container build (no
-# running init/systemd to talk to), aborting the whole dnf5 transaction.
-# Skip scriptlets entirely — this image already handles everything they
-# would have done: `systemctl enable orbit` below registers the unit,
-# and /etc/default/orbit is managed explicitly above.
-dnf5 install -y --setopt=tsflags=noscripts "${_fleetctl_workdir}/fleetd.rpm"
-
-rm -rf "${_fleetctl_workdir}"
-unset _fleetctl_workdir _fleet_releases _fleet_tag _fleet_version _fleet_arch
-
-### Preserve fleetd enrollment across bootc updates
-#
-# Orbit's systemd unit (installed by the RPM above) reads its Fleet URL
-# and enroll secret from /etc/default/orbit via EnvironmentFile, instead
-# of from values baked into the package. This image never passes a real
-# --fleet-url or --enroll-secret to `fleetctl package`, so nothing
-# meaningful ends up in that file at build time — truncate it to
-# guarantee it ships empty, matching the /etc/ipa and /etc/sssd/conf.d
-# skeletons above. Whatever an admin writes into it after deployment is
-# therefore a local addition
-# that bootc's three-way /etc merge will never overwrite.
-install -m 0644 /dev/null /etc/default/orbit
-
-### Seed Orbit's /opt and /usr/local payload at first boot via tmpfiles.d
-#
-# The RPM installed above writes orbit/osqueryd under /opt/orbit and a
-# launcher under /usr/local/bin/orbit. Both /opt and /usr/local are
-# symlinked to /var/opt and /var/usrlocal in this ostree-based image (see
-# the /opt note near the top of the Containerfile), and bootc/ostree only
-# check out /usr and the three-way-merged /etc onto a deployed system —
-# file content written under /var during this build is baked into the
-# OCI layer but never applied to a deployed host's /var beyond the very
-# first stateroot init. In practice this means orbit.service fails at
-# runtime with "status=203/EXEC ... Unable to locate executable
-# '/opt/orbit/bin/orbit/orbit'" even though `rpm -ql fleet-osquery` still
-# lists the path — rpm's metadata lives under /usr (shipped), but the
-# binaries it points at were only ever written under /var (not shipped).
-#
-# Fix: relocate the real payload into /usr/lib/orbit-seed (real /usr
-# content, so it IS shipped and versioned with the image), then install a
-# systemd-tmpfiles.d snippet that copies it into place under /opt/orbit
-# and /usr/local/bin/orbit on first boot. tmpfiles' `C` line type only
-# copies when the destination doesn't already exist, so this seeds once
-# per host and never clobbers state Orbit's own TUF autoupdater later
-# writes into /opt/orbit (osqueryd DB, downloaded updates, etc.).
-mkdir -p /usr/lib/orbit-seed/opt /usr/lib/orbit-seed/usr-local-bin
-mv /var/opt/orbit /usr/lib/orbit-seed/opt/orbit
-mv /var/usrlocal/bin/orbit /usr/lib/orbit-seed/usr-local-bin/orbit
-
-install -Dm644 /ctx/orbit-seed.conf \
-    /usr/lib/tmpfiles.d/orbit-seed.conf
-
 ### Flatpak inventory for Fleet/osquery
 #
 # osquery has no native flatpak_packages table (unlike deb_packages /
@@ -231,11 +97,9 @@ install -Dm644 /ctx/orbit-seed.conf \
 # box. flatpak-inventory.py rebuilds a small SQLite database describing
 # them; a Fleet-side agent_options `auto_table_construction` entry (see
 # CLAUDE.md) then exposes that database as a normal queryable osquery
-# table. A systemd timer keeps the database current — unlike the FreeIPA/
-# Fleet enrollment state above, this data is only ever written at
-# runtime (never baked in at build time), so it isn't subject to the
-# /var-content-isn't-shipped problem documented for Orbit and needs no
-# tmpfiles.d seeding of its own.
+# table. A systemd timer keeps the database current — unlike the FreeIPA
+# join state above, this data is only ever written at runtime (never
+# baked in at build time), so it needs no tmpfiles.d seeding of its own.
 install -Dm755 /ctx/flatpak-inventory.py \
     /usr/libexec/flatpak-inventory.py
 install -Dm644 /ctx/flatpak-inventory.service \
@@ -282,7 +146,6 @@ install -Dm644 /ctx/96-mmc-storage.conf \
 systemctl enable sssd
 systemctl enable oddjobd
 systemctl enable podman.socket
-systemctl enable orbit
 systemctl enable flatpak-inventory.timer
 
 ### Configure cosign image verification for bootc upgrades
