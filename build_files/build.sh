@@ -315,7 +315,7 @@ for _kver_dir in /usr/lib/modules/*; do
     rm -f "${_tmp_initramfs}"
     dracut --no-hostonly --force --compress=zstd \
         --add-drivers "${_boot_drivers}" \
-        --add-dracutmodules "${_boot_dracutmodules}" \
+        --add "${_boot_dracutmodules}" \
         "${_tmp_initramfs}" "${_kver}"
 
     # Verify before trusting: the file must exist and be non-empty, be
