@@ -420,13 +420,22 @@ for _repo_dir in /etc/yum.repos.d /usr/lib/yum.repos.d; do
 done
 unset _repo_dir _repo_file
 
-### Install Homebrew for all users (including FreeIPA domain users)
+### Set up Homebrew for all users (including FreeIPA domain users)
 #
 # Homebrew is installed to /home/linuxbrew/.linuxbrew (the standard Linux
-# prefix). In a bootc deployment, /home is a symlink to /var/home. The /var
-# tree is seeded from the OCI image on first install and preserved across
-# bootc upgrades, so the brew installation is present from first boot and
-# survives image updates independently.
+# prefix). In a bootc deployment, /home is a symlink to /var/home.
+#
+# The account is created here, at build time, so /etc/passwd/group ship
+# with it on every image. The actual Homebrew installation, though, is
+# deferred to a first-boot systemd unit (homebrew-install.service) instead
+# of running here: ostree only seeds /var from the image on a machine's
+# very first deployment, and leaves an already-provisioned machine's /var
+# alone on every later bootc upgrade. Installing the (thousands of files)
+# Homebrew tree into /var at build time meant CI rebuilt it from scratch
+# every day for no benefit to any already-deployed machine, and even a
+# brand-new machine's baked-in copy is immediately superseded by
+# Homebrew's own `brew update` anyway. See homebrew-install.sh/.service
+# for the actual install logic.
 #
 # The 'brew' group grants write access to the installation. Local users and
 # FreeIPA domain users added to this group can run 'brew install'. Users not
@@ -450,23 +459,11 @@ unset _repo_dir _repo_file
 install -Dm644 /ctx/homebrew-sysusers.conf /usr/lib/sysusers.d/homebrew.conf
 systemd-sysusers /usr/lib/sysusers.d/homebrew.conf
 
-# /home is a symlink to /var/home in Bluefin; create the real directory
-# since the symlink target does not exist during the container build.
-mkdir -p /var/home/linuxbrew
-chown linuxbrew:linuxbrew /var/home/linuxbrew
-chmod 0755 /var/home/linuxbrew
-
-curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh \
-    -o /tmp/brew-install.sh
-# runuser/su both invoke PAM which fails in a container build environment.
-# setpriv drops to the target UID/GID without PAM and is safe in containers.
-setpriv --reuid=linuxbrew --regid=linuxbrew --init-groups \
-    env HOME=/home/linuxbrew USER=linuxbrew NONINTERACTIVE=1 \
-    bash /tmp/brew-install.sh
-
-chgrp -R brew /home/linuxbrew/.linuxbrew
-chmod -R g+rwX /home/linuxbrew/.linuxbrew
-find /home/linuxbrew/.linuxbrew -type d -exec chmod g+s {} +
+install -Dm755 /ctx/homebrew-install.sh \
+    /usr/libexec/homebrew-install.sh
+install -Dm644 /ctx/homebrew-install.service \
+    /usr/lib/systemd/system/homebrew-install.service
+systemctl enable homebrew-install.service
 
 cat > /etc/profile.d/brew.sh << 'BREWEOF'
 if [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
