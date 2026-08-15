@@ -89,21 +89,135 @@ jobs:
             io.artifacthub.package.logo-url=${{ env.IMAGE_LOGO_URL }}
             io.artifacthub.package.prerelease=false
             containers.bootc=1
+          # sep-tags stays space-separated: both this step's own `tags`
+          # parsing below and the still-in-use redhat-actions/
+          # push-to-registry step expect that format, and tags never
+          # contain internal spaces so splitting on space is always safe.
+          #
+          # labels are deliberately left at docker/metadata-action's default
+          # (newline-separated) instead of also forcing sep-annotations to
+          # space: several label VALUES here contain spaces themselves (e.g.
+          # io.artifacthub package descriptions), so space-splitting the
+          # whole labels blob would break them apart mid-value. Newline
+          # splitting only ever splits between whole label lines, so it's
+          # safe regardless of what a given label's value contains.
           sep-tags: " "
-          sep-annotations: " "
 
+      # This runner's default container storage config points buildah at
+      # fuse-overlayfs (visible in build logs as
+      # "storage.mount_program=/usr/local/bin/fuse-overlayfs"), which doesn't
+      # support atomic rename() the way the kernel's native overlayfs does —
+      # it fails same-filesystem renames with EXDEV ("Invalid cross-device
+      # link"). build.sh's package installs trigger an SELinux policy-module
+      # rebuild (semanage/semodule, via policycoreutils-python-utils and
+      # friends), and semanage's policy-store commit relies on exactly that
+      # atomicity: it renames a staging directory into place, and under
+      # fuse-overlayfs that rename fails, falls back to a non-atomic copy that
+      # doesn't clear the destination first, and the whole commit cascades
+      # into "Directory not empty" / "semodule: Failed!" — silently, since
+      # RPM scriptlet failures don't fail the overall dnf5 transaction.
+      #
+      # Point containers/storage at a config with driver = "overlay" and no
+      # mount_program set, via CONTAINERS_STORAGE_CONF, for every remaining
+      # step in this job (Build Image and the podman/buildah calls in Push
+      # To GHCR both need to agree on the same storage).
+      #
+      # Iteration 2 learned that alone isn't enough: redhat-actions/
+      # buildah-build's setStorageOptsEnv() unconditionally re-injects
+      # overlay.mount_program=<path to fuse-overlayfs> whenever it sees
+      # driver=overlay AND finds a fuse-overlayfs binary on PATH, with no
+      # opt-out — confirmed by reading the action's source. That commit
+      # also removed the fuse-overlayfs binary so findFuseOverlayfsPath()
+      # would come up empty, but the override still fired on the next
+      # build; either a second copy exists elsewhere on PATH, or something
+      # reprovisions the package before the action's check runs.
+      #
+      # This iteration adds a second angle at the same problem: the
+      # action's OTHER half of that check, isStorageDriverOverlay(), reads
+      # driver from /etc/containers/storage.conf or
+      # ~/.config/containers/storage.conf specifically — not
+      # CONTAINERS_STORAGE_CONF at all (confirmed by reading its source
+      # too). The env-var override above was therefore never actually
+      # seen by the action's own pre-check; it was reading whatever
+      # default config already existed. Write the same driver=overlay,
+      # no-mount_program config to the exact path the action checks, on
+      # top of the CONTAINERS_STORAGE_CONF override (which buildah/podman
+      # itself does respect for the actual build) and the binary removal
+      # from the previous iteration.
+      - name: Use native overlayfs storage driver
+        run: |
+          storage_conf_content='[storage]
+          driver = "overlay"
+
+          [storage.options.overlay]
+          # Deliberately no mount_program here: an explicit empty value can
+          # still read as "set" to some containers/storage versions, so
+          # omitting the key entirely is the reliable way to get the native
+          # overlayfs driver instead of a FUSE shim.
+          '
+
+          mkdir -p "${RUNNER_TEMP}/containers"
+          echo "${storage_conf_content}" > "${RUNNER_TEMP}/containers/storage.conf"
+          echo "CONTAINERS_STORAGE_CONF=${RUNNER_TEMP}/containers/storage.conf" >> "${GITHUB_ENV}"
+
+          xdg_config_home="${XDG_CONFIG_HOME:-${HOME}/.config}"
+          mkdir -p "${xdg_config_home}/containers"
+          echo "${storage_conf_content}" > "${xdg_config_home}/containers/storage.conf"
+
+          fuse_overlayfs_path="$(command -v fuse-overlayfs || true)"
+          if [[ -n "${fuse_overlayfs_path}" ]]; then
+            sudo rm -f "${fuse_overlayfs_path}"
+          fi
+
+      # Invokes buildah directly instead of redhat-actions/buildah-build.
+      # That action's setStorageOptsEnv() unconditionally re-injects
+      # overlay.mount_program=<fuse-overlayfs path> whenever it sees
+      # driver=overlay and finds a fuse-overlayfs binary on PATH, with no
+      # opt-out (confirmed by reading its source across three separate
+      # attempts to work around it: CONTAINERS_STORAGE_CONF, removing the
+      # binary, and writing storage.conf to the exact path its own
+      # pre-check reads — the override fired every time regardless).
+      # fuse-overlayfs doesn't support atomic rename() the way native
+      # overlayfs does, which breaks the SELinux policy-store commit
+      # (semanage/semodule) build.sh's package installs trigger — see the
+      # "Use native overlayfs storage driver" step above for the full
+      # mechanism. Calling buildah ourselves is the only way found to
+      # actually get that step's storage config respected, since there's
+      # no longer an action in the way to override it back.
+      #
+      # buildah is preinstalled on the ubuntu-24.04 runner image, so no
+      # separate setup/install step is needed.
+      #
+      # `${{ steps.metadata.outputs.tags }}` is a space-separated string
+      # (sep-tags above) — read into an array with default IFS word
+      # splitting, one -t flag per tag, matching what buildah-build did.
+      # `${{ steps.metadata.outputs.labels }}` is newline-separated
+      # (docker/metadata-action's default) specifically so label values
+      # containing spaces survive intact; read line-by-line via a `while
+      # read` loop, which only splits on newlines, one --label flag per
+      # line.
+      #
+      # --format docker matches the removed action's `oci: false` input.
       - name: Build Image
         id: build_image
-        uses: redhat-actions/buildah-build@3a51aade9afa17e5c78256bcbe2e1ee08c7b995b # v3.0.2
-        with:
-          containerfiles: |
-            ./Containerfile
-          # Postfix image name with -custom to make it a little more descriptive
-          # Syntax: https://docs.github.com/en/actions/learn-github-actions/expressions#format
-          image: ${{ env.IMAGE_NAME }}
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          oci: false
+        run: |
+          tag_args=()
+          for tag in ${{ steps.metadata.outputs.tags }}; do
+            tag_args+=(-t "${IMAGE_NAME}:${tag}")
+          done
+
+          label_args=()
+          while IFS= read -r label; do
+            [[ -n "${label}" ]] || continue
+            label_args+=(--label "${label}")
+          done <<< "${{ steps.metadata.outputs.labels }}"
+
+          buildah bud \
+            --format docker \
+            -f ./Containerfile \
+            "${tag_args[@]}" \
+            "${label_args[@]}" \
+            .
 
       # Rechunk is a script that we use on Universal Blue to make sure there isnt a single huge layer when your image gets published.
       # This does not make your image faster to download, just provides better resumability and fixes a few errors.
