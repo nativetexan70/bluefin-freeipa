@@ -136,12 +136,29 @@ unset _ucm_cros_workdir
 if ! grep -q 'xkb_symbols "chromebook"' /usr/share/X11/xkb/symbols/us; then
     cat >> /usr/share/X11/xkb/symbols/us << 'XKBEOF'
 
-// Added by bluefin-freeipa: a labeled alias of us(basic) so "Chromebook"
-// is a selectable GNOME input source. See build.sh for why no key
-// bindings are overridden here.
+// Added by bluefin-freeipa: a labeled GNOME input source for Chromebook
+// hardware. See build.sh for why the Search key and action row aren't
+// touched here (already correct at the firmware/keycode level for every
+// layout) - the overrides below are for the one thing that generic
+// defaults can't provide: a Home/End/PageUp/PageDown/Delete cluster,
+// which this hardware has no dedicated physical keys for at all (ChromeOS
+// only ever reaches them via Search+arrow/Backspace combos). The Search
+// key is already this image's Super key system-wide, so Right Alt -
+// already wired as ISO_Level3_Shift/AltGr by the included us(basic) -
+// stands in as the Search-combo modifier instead: hold it with an arrow
+// key or Backspace for the level-3 symbol below. Shift still combines
+// normally on top (e.g. RightAlt+Shift+Left still reports Shift in the
+// event state alongside the Home keysym, so "select to start of line"
+// keeps working in apps that check for it).
 xkb_symbols "chromebook" {
     include "us(basic)"
     name[Group1] = "English (Chromebook)";
+
+    key <LEFT> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Left,      Left,      Home,   Home   ] };
+    key <RGHT> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Right,     Right,     End,    End    ] };
+    key <UP>   { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Up,        Up,        Prior,  Prior  ] };
+    key <DOWN> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Down,      Down,      Next,   Next   ] };
+    key <BKSP> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ BackSpace, BackSpace, Delete, Delete ] };
 };
 XKBEOF
 fi
