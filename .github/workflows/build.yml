@@ -92,6 +92,41 @@ jobs:
           sep-tags: " "
           sep-annotations: " "
 
+      # This runner's default container storage config points buildah at
+      # fuse-overlayfs (visible in build logs as
+      # "storage.mount_program=/usr/local/bin/fuse-overlayfs"), which doesn't
+      # support atomic rename() the way the kernel's native overlayfs does —
+      # it fails same-filesystem renames with EXDEV ("Invalid cross-device
+      # link"). build.sh's package installs trigger an SELinux policy-module
+      # rebuild (semanage/semodule, via policycoreutils-python-utils and
+      # friends), and semanage's policy-store commit relies on exactly that
+      # atomicity: it renames a staging directory into place, and under
+      # fuse-overlayfs that rename fails, falls back to a non-atomic copy that
+      # doesn't clear the destination first, and the whole commit cascades
+      # into "Directory not empty" / "semodule: Failed!" — silently, since
+      # RPM scriptlet failures don't fail the overall dnf5 transaction.
+      #
+      # Point containers/storage at a config with no mount_program set, via
+      # CONTAINERS_STORAGE_CONF, so it falls back to the kernel's native
+      # overlayfs (supported unprivileged on the kernel ubuntu-24.04 runners
+      # ship) instead of the FUSE shim, for every remaining step in this job
+      # (Build Image and the podman/buildah calls in Push To GHCR both need
+      # to agree on the same storage).
+      - name: Use native overlayfs storage driver
+        run: |
+          mkdir -p "${RUNNER_TEMP}/containers"
+          cat > "${RUNNER_TEMP}/containers/storage.conf" <<'EOF'
+          [storage]
+          driver = "overlay"
+
+          [storage.options.overlay]
+          # Deliberately no mount_program here: an explicit empty value can
+          # still read as "set" to some containers/storage versions, so
+          # omitting the key entirely is the reliable way to get the native
+          # overlayfs driver instead of a FUSE shim.
+          EOF
+          echo "CONTAINERS_STORAGE_CONF=${RUNNER_TEMP}/containers/storage.conf" >> "${GITHUB_ENV}"
+
       - name: Build Image
         id: build_image
         uses: redhat-actions/buildah-build@3a51aade9afa17e5c78256bcbe2e1ee08c7b995b # v3.0.2
