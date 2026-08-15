@@ -127,6 +127,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `sssd` | System Security Services Daemon — handles Kerberos authentication, LDAP user/group lookups, and caching for the FreeIPA domain. |
 | `oddjobd` | D-Bus daemon for `oddjob`. Must be running for `pam_oddjob_mkhomedir` to create home directories at login. |
 | `podman.socket` | Inherited from the Bluefin base; retained for rootless container support. |
+| `homebrew-install.service` | One-time, first-boot-only unit that installs Homebrew (see below). Skips on every later boot once installed. |
 
 ## Homebrew
 
@@ -134,9 +135,14 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 
 The brew environment is sourced automatically for all login and interactive shells via `/etc/profile.d/brew.sh`. No manual PATH configuration is required.
 
-### How it persists across bootc updates
+### Installed on first boot, not baked into the image
 
-In a bootc deployment `/home` is a symlink to `/var/home`. The `/var` tree is seeded from the OCI image on first install and preserved across `bootc upgrade` runs. This means the Homebrew installation is present from the very first boot and survives image updates independently. Packages you install via `brew` after deployment are not affected by image updates.
+Unlike most of this image's other content, Homebrew is **not** present at `t=0` of first boot — it's installed by a one-time `systemd` unit (`homebrew-install.service`) the first time the machine boots with network access, then never touched again. The `linuxbrew` user/`brew` group themselves *are* present from the very first boot (declared in the image via a pinned `systemd-sysusers.d` entry); only the actual Homebrew files are deferred.
+
+This means:
+- **First boot needs network access** before `brew` actually works. If the very first boot has no network, the install unit fails harmlessly and retries automatically on the next boot.
+- Once installed, Homebrew is never touched by `bootc upgrade` — ostree only seeds `/var` from the image on a machine's first deployment, so the install is effectively permanent per-machine from that point on, the same as if it had shipped in the image. Packages you install via `brew` afterward are equally unaffected by image updates.
+- You can check progress or force a retry with `systemctl status homebrew-install.service` / `sudo systemctl restart homebrew-install.service`.
 
 ### Running installed packages
 
@@ -180,15 +186,18 @@ This image creates the following empty directory skeletons at build time:
 
 No config files are shipped inside these paths. Every file written by `ipa-client-install` is a local addition from bootc's perspective and will never be touched by an image update.
 
-## /var Runtime Directories
+## /var State Directories
 
-SSSD's cache and runtime socket directories live under `/var`, which bootc never modifies. They are pre-created at build time to avoid race conditions on first boot before `sssd` has initialised them:
+SSSD's, certmonger's, and `ipa-client`'s cache/runtime/state directories all live under `/var`, which bootc never modifies after a machine's first deployment. sssd's are declared via `systemd-tmpfiles` (a `var-state.conf` shipped to `/usr/lib/tmpfiles.d/`) rather than existing in the image directly — `systemd-tmpfiles-setup.service` creates them fresh on every first boot, before `sssd` starts, so there's no race and nothing baked into the image for them. certmonger's and `ipa-client`'s are created by their own RPM packages regardless, but are declared in the same file too so they're documented as intentional rather than incidental build artifacts:
 
-| Path | Permissions |
-|---|---|
-| `/var/lib/sss/db` | `0711` |
-| `/var/lib/sss/pipes/private` | `0755` |
-| `/var/log/sssd` | `0755` |
+| Path | Permissions | Owner |
+|---|---|---|
+| `/var/lib/sss/db` | `0711` | root |
+| `/var/lib/sss/pipes/private` | `0755` | root |
+| `/var/lib/sss/keytabs` | `0770` | sssd |
+| `/var/log/sssd` | `0755` | root |
+| `/var/lib/certmonger`, `/cas`, `/local`, `/requests` | `0755` / `0700` | root |
+| `/var/lib/ipa-client`, `/pki`, `/sysrestore` | `0755` | root |
 
 ## Hostname Preservation
 
