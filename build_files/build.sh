@@ -306,16 +306,43 @@ _boot_drivers="nvme ahci sd_mod sr_mod virtio_blk virtio_scsi usb_storage"
 # the same way 95-hibernation-resume.conf force-adds "resume".
 _boot_dracutmodules="ostree"
 
+# Regenerating this initramfs (see above) switched it from dracut's
+# hostonly filtering to "generic" (--no-hostonly) mode, and generic mode's
+# documented behavior is to bundle every driver dracut can find under the
+# kernel's module tree, not just boot-critical ones — that's why this loop
+# takes tens of seconds per kernel and produces a multi-MB file even before
+# --add-drivers runs. For sound/ that's actively harmful, not just wasteful:
+# it pulls in both this image's SOF/SoundWire stack (see "Chromebook
+# SoundWire/SOF audio support" above) *and* the legacy snd_hda_intel
+# HD-Audio driver, and initramfs's udev coldplug autoloads matching
+# drivers for every PCI device it sees — including the audio controller —
+# before switch-root, while the real root's SOF firmware
+# (/lib/firmware/intel/sof*, from alsa-sof-firmware) and UCM profiles
+# aren't mounted yet. A driver that binds the controller that early can
+# leave it stuck on the wrong (or firmware-less, non-functional) driver
+# for the rest of boot, since kernel driver bindings aren't undone across
+# switch-root. No audio driver is ever needed pre-switch-root, so the
+# fix is to exclude the entire sound/ driver tree from this initramfs,
+# leaving driver selection to happen exactly once, on the real root, where
+# snd_intel_dspcfg's dsp_driver=auto logic and the UCM profiles are both
+# present. Built from the running kernel's own module tree (rather than a
+# hardcoded name list) so it tracks whichever sound drivers that kernel
+# actually ships.
 _kver_count=0
 for _kver_dir in /usr/lib/modules/*; do
     _kver="$(basename "${_kver_dir}")"
     [[ -f "${_kver_dir}/vmlinuz" ]] || continue
+
+    _sound_drivers="$(find "${_kver_dir}/kernel/sound" -name '*.ko*' \
+        -printf '%f\n' 2>/dev/null \
+        | sed -E 's/\.ko(\.zst|\.xz|\.gz)?$//' | sort -u | tr '\n' ' ' || true)"
 
     _tmp_initramfs="${_kver_dir}/initramfs.img.new"
     rm -f "${_tmp_initramfs}"
     dracut --no-hostonly --force --compress=zstd \
         --add-drivers "${_boot_drivers}" \
         --add "${_boot_dracutmodules}" \
+        --omit-drivers "${_sound_drivers}" \
         "${_tmp_initramfs}" "${_kver}"
 
     # Verify before trusting: the file must exist and be non-empty, be
@@ -340,12 +367,19 @@ for _kver_dir in /usr/lib/modules/*; do
     _initramfs_listing="$(lsinitrd "${_tmp_initramfs}")"
     grep -qE "/(${_boot_drivers// /|})\.ko" <<<"${_initramfs_listing}"
     grep -q "ostree-prepare-root" <<<"${_initramfs_listing}"
+    # Negative check: catch a --omit-drivers regression (e.g. a future
+    # dracut/base-image change reintroducing sound modules some other way)
+    # before it ships, the same way the positive checks above catch a
+    # missing storage driver or dracut module.
+    if [[ -n "${_sound_drivers// /}" ]]; then
+        ! grep -qE "/sound/.*\.ko" <<<"${_initramfs_listing}"
+    fi
 
     mv -f "${_tmp_initramfs}" "${_kver_dir}/initramfs.img"
     _kver_count=$((_kver_count + 1))
 done
 ((_kver_count > 0))
-unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers _boot_dracutmodules _initramfs_listing
+unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers _boot_dracutmodules _initramfs_listing _sound_drivers
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
