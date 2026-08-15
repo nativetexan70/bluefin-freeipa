@@ -159,9 +159,41 @@ xkb_symbols "chromebook" {
     key <UP>   { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Up,        Up,        Prior,  Prior  ] };
     key <DOWN> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Down,      Down,      Next,   Next   ] };
     key <BKSP> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ BackSpace, BackSpace, Delete, Delete ] };
+
+    // Search+Esc opens ChromeOS's task manager. Lock screen (Search+L)
+    // and numbered app launch (Search+1..9) need nothing here at all -
+    // Search is already Super on this hardware, and GNOME's own defaults
+    // for <Super>l (lock) and <Super>1..9 (switch-to-application-N)
+    // already cover those exactly. There's no stock GNOME equivalent for
+    // Search+Esc, so it's routed through a dedicated keysym (XF86TaskPane,
+    // not otherwise bound to anything by default) that a custom
+    // media-keys keybinding below launches gnome-system-monitor from -
+    // same input-source-scoping trick as the nav cluster: under
+    // English (US) this key is still plain Escape, since the override
+    // only exists in this variant.
+    key <ESC> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Escape, Escape, XF86TaskPane, XF86TaskPane ] };
 };
 XKBEOF
 fi
+
+# Bind XF86TaskPane (Search+Esc under the Chromebook input source, see
+# above) to gnome-system-monitor as GNOME's nearest equivalent to
+# ChromeOS's task manager. Shipped as a system-wide dconf default, the
+# same mechanism already used for the Logo Menu icon override below -
+# custom-keybindings is a list-valued key, so if a future addition here
+# or elsewhere also needs one, they must be combined into a single list
+# rather than each overwriting the other's entry.
+install -dm755 /etc/dconf/db/distro.d
+cat > /etc/dconf/db/distro.d/07-chromebook-task-manager << 'DCONFEOF'
+[org/gnome/settings-daemon/plugins/media-keys]
+custom-keybindings=['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/chromebook-task-manager/']
+
+[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/chromebook-task-manager]
+name='Task Manager (Chromebook)'
+command='gnome-system-monitor'
+binding='XF86TaskPane'
+DCONFEOF
+dconf update
 
 # Register the variant so GNOME's Input Sources picker (and any other
 # libxkbregistry consumer) can find it. xkeyboard-config's *.extras.xml
