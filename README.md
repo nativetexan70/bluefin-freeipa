@@ -302,6 +302,27 @@ sof-audio-pci-intel-tgl 0000:00:1f.3: error: dsp init failed after 3 attempts wi
 
 **Fix:** re-enable Intel ME in [MrChromebox's firmware utility](https://mrchromebox.tech) (ME-mode option) and reflash. Once CSE is running, `sof-audio-pci-intel-tgl` completes its firmware boot normally and the SoundWire card (e.g. `rt5682`/`rt1011`) is registered, at which point this image's UCM overlay (see the Containerfile build script) takes over correctly.
 
+## Chromebook Keyboard Input Source
+
+This image registers **"English (Chromebook)"** as a selectable entry in GNOME Settings → Region & Language → Input Sources → Add an Input Source (search "chromebook" if it doesn't show by default). Selecting it is what activates everything below — plain "English (US)" is left as a completely standard layout.
+
+On Chromebooks converted to run this image via MrChromebox firmware, the Search/Launcher key, the action-key top row (back/forward/refresh/brightness/volume), and the Overview key are already remapped to their correct keycodes by firmware/kernel defaults and picked up automatically by **every** keyboard layout, so those parts need nothing from this variant. What it adds is the ChromeOS Search-key combos that need somewhere to go — this hardware has no dedicated Home, End, Page Up, Page Down, or Delete keys at all, since ChromeOS only ever reaches them via `Search` held with another key. Since `Search` is already this image's `Super` key, there's no key left free to play that role, so the Chromebook variant uses **Right Alt** instead:
+
+| Combo | Result |
+|---|---|
+| `Right Alt + ←` | Home |
+| `Right Alt + →` | End |
+| `Right Alt + ↑` | Page Up |
+| `Right Alt + ↓` | Page Down |
+| `Right Alt + Backspace` | Delete |
+| `Right Alt + Esc` | Task Manager (opens `gnome-system-monitor`) |
+
+The first five work in every application automatically — they produce real `Home`/`End`/`Page Up`/`Page Down`/`Delete` keypresses, not a desktop-specific shortcut, and `Shift` still combines normally on top (e.g. `Right Alt+Shift+←` still extends a text selection). `Right Alt + Esc` is the one ChromeOS combo (`Search+Esc` → task manager) with no GNOME equivalent, so it's wired to a system-wide custom keybinding instead.
+
+Two other ChromeOS Search-combos need nothing from this image at all, because `Search` is already `Super` here and GNOME's own defaults already do the same thing: **lock screen** (`Search+L` → GNOME's stock `Super+L`) and **launch/switch to the Nth pinned app** (`Search+1`–`9` → GNOME Shell's stock `Super+1`–`9`).
+
+(Separately, `localectl set-x11-keymap <layout> <variant> chromebook` sets the XKB *model* to `chromebook`, which only affects on-screen-keyboard geometry graphics — unrelated to, and not required alongside, the input source above.)
+
 ---
 
 # Building the Image Locally

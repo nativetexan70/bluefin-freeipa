@@ -110,6 +110,139 @@ cp -a "${_ucm_cros_workdir}/overrides/." /usr/share/alsa/ucm2/conf.d/
 rm -rf "${_ucm_cros_workdir}"
 unset _ucm_cros_workdir
 
+### Register a "Chromebook" keyboard input source, selectable in GNOME Settings
+#
+# On Chromebooks converted to run this image via MrChromebox coreboot
+# firmware, every Chromebook-specific key (Search/Launcher -> Super, the
+# action-key top row, the Overview key) is already remapped to its correct
+# evdev keycode by firmware/kernel defaults and picked up generically by
+# /usr/share/X11/xkb/symbols/inet, which every XKB layout includes
+# regardless of which one is active - the same firmware-dependency pattern
+# documented for SOF audio above (see README's "No Sound on Chromebook
+# Hardware" section). Plain "English (US)" therefore already behaves
+# correctly on this hardware, and GNOME's Input Sources picker only ever
+# lists XKB layouts/variants (symbols-level config), never the XKB *model*
+# (set separately, per-machine, via `localectl set-x11-keymap ... chromebook`
+# for keyboard-geometry purposes) - so there is nothing actually broken to
+# fix here.
+#
+# This variant therefore changes no key bindings; it exists purely so
+# "Chromebook" is a real, selectable, unambiguous entry in the picker
+# instead of requiring users to trust that "English (US)" already does the
+# right thing on this hardware.
+
+# Idempotent: guards against a duplicate section if a future
+# xkeyboard-config version ever ships one of this name upstream.
+if ! grep -q 'xkb_symbols "chromebook"' /usr/share/X11/xkb/symbols/us; then
+    cat >> /usr/share/X11/xkb/symbols/us << 'XKBEOF'
+
+// Added by bluefin-freeipa: a labeled GNOME input source for Chromebook
+// hardware. See build.sh for why the Search key and action row aren't
+// touched here (already correct at the firmware/keycode level for every
+// layout) - the overrides below are for the one thing that generic
+// defaults can't provide: a Home/End/PageUp/PageDown/Delete cluster,
+// which this hardware has no dedicated physical keys for at all (ChromeOS
+// only ever reaches them via Search+arrow/Backspace combos). The Search
+// key is already this image's Super key system-wide, so Right Alt -
+// already wired as ISO_Level3_Shift/AltGr by the included us(basic) -
+// stands in as the Search-combo modifier instead: hold it with an arrow
+// key or Backspace for the level-3 symbol below. Shift still combines
+// normally on top (e.g. RightAlt+Shift+Left still reports Shift in the
+// event state alongside the Home keysym, so "select to start of line"
+// keeps working in apps that check for it).
+xkb_symbols "chromebook" {
+    include "us(basic)"
+    name[Group1] = "English (Chromebook)";
+
+    key <LEFT> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Left,      Left,      Home,   Home   ] };
+    key <RGHT> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Right,     Right,     End,    End    ] };
+    key <UP>   { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Up,        Up,        Prior,  Prior  ] };
+    key <DOWN> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Down,      Down,      Next,   Next   ] };
+    key <BKSP> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ BackSpace, BackSpace, Delete, Delete ] };
+
+    // Search+Esc opens ChromeOS's task manager. Lock screen (Search+L)
+    // and numbered app launch (Search+1..9) need nothing here at all -
+    // Search is already Super on this hardware, and GNOME's own defaults
+    // for <Super>l (lock) and <Super>1..9 (switch-to-application-N)
+    // already cover those exactly. There's no stock GNOME equivalent for
+    // Search+Esc, so it's routed through a dedicated keysym (XF86TaskPane,
+    // not otherwise bound to anything by default) that a custom
+    // media-keys keybinding below launches gnome-system-monitor from -
+    // same input-source-scoping trick as the nav cluster: under
+    // English (US) this key is still plain Escape, since the override
+    // only exists in this variant.
+    key <ESC> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Escape, Escape, XF86TaskPane, XF86TaskPane ] };
+};
+XKBEOF
+fi
+
+# Bind XF86TaskPane (Search+Esc under the Chromebook input source, see
+# above) to gnome-system-monitor as GNOME's nearest equivalent to
+# ChromeOS's task manager. Shipped as a system-wide dconf default, the
+# same mechanism already used for the Logo Menu icon override below -
+# custom-keybindings is a list-valued key, so if a future addition here
+# or elsewhere also needs one, they must be combined into a single list
+# rather than each overwriting the other's entry.
+install -dm755 /etc/dconf/db/distro.d
+cat > /etc/dconf/db/distro.d/07-chromebook-task-manager << 'DCONFEOF'
+[org/gnome/settings-daemon/plugins/media-keys]
+custom-keybindings=['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/chromebook-task-manager/']
+
+[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/chromebook-task-manager]
+name='Task Manager (Chromebook)'
+command='gnome-system-monitor'
+binding='XF86TaskPane'
+DCONFEOF
+dconf update
+
+# Register the variant so GNOME's Input Sources picker (and any other
+# libxkbregistry consumer) can find it. xkeyboard-config's *.extras.xml
+# files list "less common" variants merged in alongside the main *.xml
+# rules at query time - this is the standard mechanism the project itself
+# uses for exactly this kind of addition (22 other extra "us" variants
+# already live in the same <layout> block this edits). evdev.xml is what
+# GNOME/Wayland actually query; base.xml/base.extras.xml are kept in sync
+# too since they are byte-identical siblings shipped by the same
+# xkeyboard-config package and some legacy X11-only tools read them
+# instead.
+#
+# Plain text insertion (not an XML-tree parse/rewrite) is deliberate: it's
+# the only way to add one <variant> without reserializing - and thereby
+# reformatting, or silently dropping the DOCTYPE from - the rest of a
+# 250KB+ file neither of us owns.
+python3 - << 'PYEOF'
+for path in (
+    "/usr/share/X11/xkb/rules/evdev.extras.xml",
+    "/usr/share/X11/xkb/rules/base.extras.xml",
+):
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if "English (Chromebook)" in content:
+        continue  # already registered
+
+    anchor = "<description>English (US)</description>"
+    us_idx = content.index(anchor)
+    close_idx = content.index("</variantList>", us_idx)
+    # Insert at the start of the </variantList> line, not right before the
+    # tag itself, so that line's own pre-existing indentation stays where
+    # it is instead of prefixing the inserted block.
+    line_start = content.rfind("\n", 0, close_idx) + 1
+
+    insertion = (
+        "        <variant>\n"
+        '          <configItem popularity="exotic">\n'
+        "            <name>chromebook</name>\n"
+        "            <description>English (Chromebook)</description>\n"
+        "          </configItem>\n"
+        "        </variant>\n"
+    )
+    content = content[:line_start] + insertion + content[line_start:]
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+PYEOF
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
