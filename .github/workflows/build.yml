@@ -106,12 +106,24 @@ jobs:
       # into "Directory not empty" / "semodule: Failed!" — silently, since
       # RPM scriptlet failures don't fail the overall dnf5 transaction.
       #
-      # Point containers/storage at a config with no mount_program set, via
-      # CONTAINERS_STORAGE_CONF, so it falls back to the kernel's native
-      # overlayfs (supported unprivileged on the kernel ubuntu-24.04 runners
-      # ship) instead of the FUSE shim, for every remaining step in this job
-      # (Build Image and the podman/buildah calls in Push To GHCR both need
-      # to agree on the same storage).
+      # Point containers/storage at a config with driver = "overlay" and no
+      # mount_program set, via CONTAINERS_STORAGE_CONF, for every remaining
+      # step in this job (Build Image and the podman/buildah calls in Push
+      # To GHCR both need to agree on the same storage).
+      #
+      # That alone isn't enough, though: redhat-actions/buildah-build's
+      # setStorageOptsEnv() unconditionally re-injects
+      # overlay.mount_program=<path to fuse-overlayfs> whenever it sees
+      # driver=overlay AND finds a fuse-overlayfs binary on PATH — there is
+      # no env var or action input to opt out of this, it's unconditional
+      # (confirmed by reading the action's source: the override fires solely
+      # off those two conditions). So the storage.conf above is necessary
+      # but not sufficient — the action will silently override it right
+      # back to fuse-overlayfs unless the binary simply isn't there for it
+      # to find. Remove it from PATH so findFuseOverlayfsPath() comes up
+      # empty and the override never fires, leaving the native kernel
+      # overlayfs driver (supported unprivileged on the kernel ubuntu-24.04
+      # runners ship) actually in effect.
       - name: Use native overlayfs storage driver
         run: |
           mkdir -p "${RUNNER_TEMP}/containers"
@@ -126,6 +138,11 @@ jobs:
           # overlayfs driver instead of a FUSE shim.
           EOF
           echo "CONTAINERS_STORAGE_CONF=${RUNNER_TEMP}/containers/storage.conf" >> "${GITHUB_ENV}"
+
+          fuse_overlayfs_path="$(command -v fuse-overlayfs || true)"
+          if [[ -n "${fuse_overlayfs_path}" ]]; then
+            sudo rm -f "${fuse_overlayfs_path}"
+          fi
 
       - name: Build Image
         id: build_image
