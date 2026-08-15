@@ -288,6 +288,20 @@ systemctl reboot
 > [!NOTE]
 > If you are switching from a non-bootc system or a completely different distribution, a fresh install from the [installer ISO](#building-disk-images-locally) is the more reliable path.
 
+## Troubleshooting: No Sound on Chromebook Hardware (SOF DSP Boot Failure)
+
+This image installs everything the SOF/SoundWire audio stack needs (firmware, UCM profiles — see the Containerfile build script), but on Chromebooks converted to run this image via [MrChromebox](https://mrchromebox.tech) coreboot firmware, audio can still fail completely: `aplay -l` / `/proc/asound/cards` shows no sound card at all, and `journalctl -k` shows the DSP repeatedly failing to boot:
+
+```
+sof-audio-pci-intel-tgl 0000:00:1f.3: cl_dsp_init: timeout with rom_status_reg (0x80000) read
+sof-audio-pci-intel-tgl 0000:00:1f.3: 0x06000021: module: ROM, state: CSE_IPC_RESET_PHASE_1, waiting for: CSE_CSR, running
+sof-audio-pci-intel-tgl 0000:00:1f.3: error: dsp init failed after 3 attempts with err: -110
+```
+
+**Root cause:** on Tiger Lake-class hardware (e.g. Google Volteer/"Lindar"), the audio DSP's firmware image is not loaded directly — it's authenticated through a handshake with the platform's CSE (Converged Security Engine), which is the same subsystem as the Intel Management Engine (ME). MrChromebox's firmware utility exposes ME on/off as a user-configurable option during flashing (common on Chromebook conversions, for privacy/security reasons). **If ME is disabled, CSE never boots, so the DSP ROM's authentication handshake has nothing to answer it** — it times out three times (`-110` = `ETIMEDOUT`) and no sound card is ever registered. This is a firmware-level dependency; no kernel parameter, SOF firmware variant (IPC3 vs IPC4), or driver choice on the OS side can work around it — forcing the older AVS driver (`snd_intel_dspcfg.dsp_driver=4`) confirms this, since AVS's simpler, pre-cAVS-secure-boot firmware-loading path does get past the CSE handshake, but Fedora doesn't ship an AVS firmware blob for Tiger Lake, so it's not a usable fix either — only useful as a diagnostic to confirm CSE is the actual blocker.
+
+**Fix:** re-enable Intel ME in [MrChromebox's firmware utility](https://mrchromebox.tech) (ME-mode option) and reflash. Once CSE is running, `sof-audio-pci-intel-tgl` completes its firmware boot normally and the SoundWire card (e.g. `rt5682`/`rt1011`) is registered, at which point this image's UCM overlay (see the Containerfile build script) takes over correctly.
+
 ---
 
 # Building the Image Locally
