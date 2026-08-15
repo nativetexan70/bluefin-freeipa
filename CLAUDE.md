@@ -56,6 +56,12 @@ The `Containerfile`'s final `RUN bootc container lint` must pass with zero warni
 
 bootc performs a three-way `/etc` merge on update: it diffs old-image `/etc` vs new-image `/etc` and applies that delta to local `/etc`. Files written by `ipa-client-install` (`sssd.conf`, `krb5.conf`, `/etc/ipa/default.conf`, etc.) are never shipped in this image, so bootc treats them as local additions and never overwrites them. The `/etc/ipa/` and `/etc/sssd/conf.d/` directories are present in the image as empty skeletons — no config content is shipped inside them.
 
+### GDM Login Screen — No Local-Account Picker
+
+`build.sh` sets `org.gnome.login-screen disable-user-list=true`, so GDM shows a plain username prompt instead of a clickable account list. This isn't cosmetic preference — GDM's list is populated from AccountsService/local `passwd` entries (UID ≥ 1000) only; it has no path to domain accounts at all, since sssd's `enumerate = false` default (deliberate, for performance/security — full-directory enumeration isn't something FreeIPA supports doing for a login screen) means there's nothing to list them from. Showing a list would mean showing only this image's local accounts on a machine meant to be domain-joined, which is the opposite of what's wanted. Disabling the list is the standard, documented fix for this exact scenario; both local and domain accounts still authenticate the same way afterward, by typing their username.
+
+The override goes in `/etc/dconf/db/gdm.d/`, **not** the `distro.d` directory the Logo Menu/Task Manager overrides below use — those are two different databases read by two different processes. GDM's greeter runs under its own dconf profile (`/usr/share/dconf/profile/gdm`, shipped by the `gdm` package), whose db chain lists `gdm` ahead of `distro`; a key only meaningful to the greeter belongs in the db that profile actually names for it.
+
 ### Chromebook SoundWire/SOF Audio Support
 
 Many recent Chromebooks — including Tiger Lake models in Google's Volteer family (e.g. Lindar/"Lillipup") — drive audio entirely through Intel's SOF DSP over SoundWire (an RT5682 headset codec plus RT1011 speaker amps, in the Volteer case), not a conventional HD-Audio codec. Without extra setup, the desktop shows only a routeless "Dummy Output" sink and the speakers are silent. Three independent fixes are needed, and `build.sh` applies all three:

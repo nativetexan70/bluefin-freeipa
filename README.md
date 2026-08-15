@@ -84,6 +84,10 @@ To remove the machine from FreeIPA cleanly:
 sudo ipa-client-install --uninstall
 ```
 
+## Login Screen
+
+This image's GDM login screen shows no clickable account list — it prompts for a username directly instead. This is deliberate: GDM's user-picker is populated from local accounts (AccountsService, UID ≥ 1000), never from the domain, since SSSD defaults to `enumerate = false` and enumerating an entire directory's users for a login screen isn't something FreeIPA supports or recommends. Rather than show a list of only this image's local accounts on what's meant to be a domain-joined machine, the list is disabled entirely (`org.gnome.login-screen disable-user-list`) — both local and domain accounts still log in the same way, by typing their username.
+
 ---
 
 # FreeIPA Join Persistence

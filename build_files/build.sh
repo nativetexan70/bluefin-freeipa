@@ -243,6 +243,36 @@ for path in (
         f.write(content)
 PYEOF
 
+### Hide the local-account picker on the GDM login screen
+#
+# On a FreeIPA-joined machine, the accounts worth showing on the login
+# screen are domain accounts, not this image's local ones - but GDM's
+# clickable user list is populated from AccountsService/local passwd
+# entries (UID >= 1000), never from the domain: sssd defaults to
+# enumerate = false (deliberately - enumerating an entire directory's
+# users is expensive and generally discouraged for both performance and
+# security reasons), so there is no supported way to make the list
+# populate with domain accounts instead. Disabling the list entirely
+# (org.gnome.login-screen disable-user-list) is the standard fix
+# documented for exactly this scenario: it replaces the clickable list
+# with a plain "type your username" prompt for everyone, local
+# fallback accounts included, which is the normal login UX on any
+# domain-joined machine.
+#
+# This must go in GDM's own dconf db, not the "distro" db the Logo Menu
+# and Task Manager overrides above use - the two are read by different
+# processes. GDM's greeter runs under its own dconf profile
+# (/usr/share/dconf/profile/gdm, shipped by the gdm package), whose
+# db chain includes "gdm" ahead of "distro"; a key only meaningful to
+# the greeter belongs in the db that profile actually names for it,
+# not one that's also read by every normal user session.
+install -dm755 /etc/dconf/db/gdm.d
+cat > /etc/dconf/db/gdm.d/01-disable-user-list << 'DCONFEOF'
+[org/gnome/login-screen]
+disable-user-list=true
+DCONFEOF
+dconf update
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
