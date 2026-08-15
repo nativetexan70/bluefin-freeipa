@@ -1,0 +1,18 @@
+[Unit]
+Description=Exclude local sudo accounts from the GDM login screen
+Documentation=file:///usr/libexec/hide-local-admins-gdm.py
+# Must run before GDM starts building its greeter user list, on every
+# boot - not gated to first-boot-only, since the local admin account may
+# not exist yet at very first boot (gnome-initial-setup, on the GNOME
+# ISO, creates it on first graphical login rather than before) and its
+# wheel membership could change later regardless. A soft Before= (not
+# Requires=) so a failure here never blocks reaching the login screen.
+Before=display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/hide-local-admins-gdm.py
+
+[Install]
+WantedBy=graphical.target
