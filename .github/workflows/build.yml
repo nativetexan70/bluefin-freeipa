@@ -89,8 +89,19 @@ jobs:
             io.artifacthub.package.logo-url=${{ env.IMAGE_LOGO_URL }}
             io.artifacthub.package.prerelease=false
             containers.bootc=1
+          # sep-tags stays space-separated: both this step's own `tags`
+          # parsing below and the still-in-use redhat-actions/
+          # push-to-registry step expect that format, and tags never
+          # contain internal spaces so splitting on space is always safe.
+          #
+          # labels are deliberately left at docker/metadata-action's default
+          # (newline-separated) instead of also forcing sep-annotations to
+          # space: several label VALUES here contain spaces themselves (e.g.
+          # io.artifacthub package descriptions), so space-splitting the
+          # whole labels blob would break them apart mid-value. Newline
+          # splitting only ever splits between whole label lines, so it's
+          # safe regardless of what a given label's value contains.
           sep-tags: " "
-          sep-annotations: " "
 
       # This runner's default container storage config points buildah at
       # fuse-overlayfs (visible in build logs as
@@ -158,18 +169,55 @@ jobs:
             sudo rm -f "${fuse_overlayfs_path}"
           fi
 
+      # Invokes buildah directly instead of redhat-actions/buildah-build.
+      # That action's setStorageOptsEnv() unconditionally re-injects
+      # overlay.mount_program=<fuse-overlayfs path> whenever it sees
+      # driver=overlay and finds a fuse-overlayfs binary on PATH, with no
+      # opt-out (confirmed by reading its source across three separate
+      # attempts to work around it: CONTAINERS_STORAGE_CONF, removing the
+      # binary, and writing storage.conf to the exact path its own
+      # pre-check reads — the override fired every time regardless).
+      # fuse-overlayfs doesn't support atomic rename() the way native
+      # overlayfs does, which breaks the SELinux policy-store commit
+      # (semanage/semodule) build.sh's package installs trigger — see the
+      # "Use native overlayfs storage driver" step above for the full
+      # mechanism. Calling buildah ourselves is the only way found to
+      # actually get that step's storage config respected, since there's
+      # no longer an action in the way to override it back.
+      #
+      # buildah is preinstalled on the ubuntu-24.04 runner image, so no
+      # separate setup/install step is needed.
+      #
+      # `${{ steps.metadata.outputs.tags }}` is a space-separated string
+      # (sep-tags above) — read into an array with default IFS word
+      # splitting, one -t flag per tag, matching what buildah-build did.
+      # `${{ steps.metadata.outputs.labels }}` is newline-separated
+      # (docker/metadata-action's default) specifically so label values
+      # containing spaces survive intact; read line-by-line via a `while
+      # read` loop, which only splits on newlines, one --label flag per
+      # line.
+      #
+      # --format docker matches the removed action's `oci: false` input.
       - name: Build Image
         id: build_image
-        uses: redhat-actions/buildah-build@3a51aade9afa17e5c78256bcbe2e1ee08c7b995b # v3.0.2
-        with:
-          containerfiles: |
-            ./Containerfile
-          # Postfix image name with -custom to make it a little more descriptive
-          # Syntax: https://docs.github.com/en/actions/learn-github-actions/expressions#format
-          image: ${{ env.IMAGE_NAME }}
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          oci: false
+        run: |
+          tag_args=()
+          for tag in ${{ steps.metadata.outputs.tags }}; do
+            tag_args+=(-t "${IMAGE_NAME}:${tag}")
+          done
+
+          label_args=()
+          while IFS= read -r label; do
+            [[ -n "${label}" ]] || continue
+            label_args+=(--label "${label}")
+          done <<< "${{ steps.metadata.outputs.labels }}"
+
+          buildah bud \
+            --format docker \
+            -f ./Containerfile \
+            "${tag_args[@]}" \
+            "${label_args[@]}" \
+            .
 
       # Rechunk is a script that we use on Universal Blue to make sure there isnt a single huge layer when your image gets published.
       # This does not make your image faster to download, just provides better resumability and fixes a few errors.
