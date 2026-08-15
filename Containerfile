@@ -25,11 +25,23 @@ FROM ghcr.io/ublue-os/bluefin:stable
 ### MODIFICATIONS
 ## make modifications desired in your image and install packages by modifying the build.sh script
 ## the following RUN directive does all the things required to run "build.sh" as recommended.
+##
+## /run is tmpfs-mounted for the same reason /tmp already is: without it, package
+## scriptlets that write runtime-only scratch state during install (e.g.
+## certmonger, dnf, selinux-policy all drop files under /run as a side effect of
+## the package transaction below) get that content baked permanently into the
+## image layer, since there's no running init here to treat /run as ephemeral
+## the way a real boot does. `bootc container lint`'s nonempty-run-tmp check
+## flags exactly this. Mounting /run as tmpfs for the RUN step discards
+## anything written there once the step completes, the same way the existing
+## /tmp mount already does — nothing in build_files/ reads /run afterward, so
+## nothing here depends on that content surviving into the image.
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
+    --mount=type=tmpfs,dst=/run \
     bash /ctx/build.sh
 
 # COPY writes directly to the image layer and is not subject to the bind-mount
