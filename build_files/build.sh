@@ -431,10 +431,24 @@ unset _repo_dir _repo_file
 # The 'brew' group grants write access to the installation. Local users and
 # FreeIPA domain users added to this group can run 'brew install'. Users not
 # in the group can still run any package that is already installed.
-
-useradd -r -M -d /home/linuxbrew -s /bin/bash linuxbrew
-groupadd -r brew
-usermod -aG brew linuxbrew
+#
+# The linuxbrew user/brew group are declared via systemd-sysusers rather
+# than useradd/groupadd, with pinned UID/GID (950/951), instead of letting
+# useradd/groupadd allocate whatever system ID happens to be free that day.
+# bootc container lint flags plain useradd/groupadd here ("sysusers" check)
+# for a real reason: /etc/passwd and /etc/group ARE part of bootc's
+# three-way /etc merge on upgrade (unlike /var — see below), so if two
+# builds of this image allocate a different UID for the same username (a
+# real risk across daily rebuilds, since the free-ID choice depends on
+# whatever other system accounts exist in that day's build), the merge
+# applies that UID change to already-deployed machines. The on-disk files
+# under /var/home/linuxbrew (seeded once, at first install, with the
+# numeric UID baked into their inodes) don't get renumbered to match, so
+# the account silently stops owning its own files. A fixed UID/GID makes
+# every build produce byte-identical passwd/group entries for this
+# account, so there's never a diff for the merge to apply.
+install -Dm644 /ctx/homebrew-sysusers.conf /usr/lib/sysusers.d/homebrew.conf
+systemd-sysusers /usr/lib/sysusers.d/homebrew.conf
 
 # /home is a symlink to /var/home in Bluefin; create the real directory
 # since the symlink target does not exist during the container build.
