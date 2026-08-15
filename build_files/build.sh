@@ -143,15 +143,19 @@ if ! grep -q 'xkb_symbols "chromebook"' /usr/share/X11/xkb/symbols/us; then
 // defaults can't provide: a Home/End/PageUp/PageDown/Delete cluster,
 // which this hardware has no dedicated physical keys for at all (ChromeOS
 // only ever reaches them via Search+arrow/Backspace combos). The Search
-// key is already this image's Super key system-wide, so Right Alt -
-// already wired as ISO_Level3_Shift/AltGr by the included us(basic) -
-// stands in as the Search-combo modifier instead: hold it with an arrow
-// key or Backspace for the level-3 symbol below. Shift still combines
-// normally on top (e.g. RightAlt+Shift+Left still reports Shift in the
-// event state alongside the Home keysym, so "select to start of line"
-// keeps working in apps that check for it).
+// key is already this image's Super key system-wide, so Right Alt stands
+// in as the Search-combo modifier instead: hold it with an arrow key or
+// Backspace for the level-3 symbol below. us(basic) alone does NOT wire
+// Right Alt to ISO_Level3_Shift - that binding lives in the separate
+// level3(ralt_switch) option and only applies if a machine's XKB options
+// string happens to request it - so it's included explicitly here to
+// make this variant self-contained. Shift still combines normally on top
+// (e.g. RightAlt+Shift+Left still reports Shift in the event state
+// alongside the Home keysym, so "select to start of line" keeps working
+// in apps that check for it).
 xkb_symbols "chromebook" {
     include "us(basic)"
+    include "level3(ralt_switch)"
     name[Group1] = "English (Chromebook)";
 
     key <LEFT> { type[Group1] = "FOUR_LEVEL", symbols[Group1] = [ Left,      Left,      Home,   Home   ] };
