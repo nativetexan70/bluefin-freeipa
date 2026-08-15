@@ -50,11 +50,13 @@ dnf5 install -y --allowerasing \
 install -d -m 0755 /etc/ipa
 install -d -m 0750 /etc/sssd/conf.d
 
-# Ensure sssd runtime and cache directories survive across updates.
-# These already live under /var which is mutable and preserved by bootc.
-install -d -m 0711 /var/lib/sss/db
-install -d -m 0755 /var/lib/sss/pipes/private
-install -d -m 0755 /var/log/sssd
+# sssd's own runtime/cache directories under /var, plus certmonger's
+# (already-existing, RPM-owned) state directories, are declared via
+# systemd-tmpfiles rather than created directly here — see var-state.conf
+# for why (bootc container lint's var-tmpfiles check, and avoiding baking
+# content into /var at build time that a real first boot can create itself).
+install -Dm644 /ctx/var-state.conf \
+    /usr/lib/tmpfiles.d/var-state.conf
 
 ### Chromebook SoundWire/SOF audio support (e.g. Tiger Lake "Volteer" boards)
 #
@@ -260,7 +262,9 @@ fi
 # dracut-install tries to snapshot /root while building the archive and
 # fails outright if the symlink dangles ("dracut-install: ERROR:
 # installing '/root'"), aborting the dracut run. Create the real target
-# directory first so the symlink resolves.
+# directory first so the symlink resolves. Removed again once the loop
+# below is done with it (see there) — it's only ever needed as a target
+# for dracut-install to snapshot during this build, not as shipped content.
 mkdir -p /var/roothome
 #
 # --no-hostonly avoids hardware-specific probing that fails in a container.
@@ -380,6 +384,14 @@ for _kver_dir in /usr/lib/modules/*; do
 done
 ((_kver_count > 0))
 unset _kver_dir _kver _tmp_initramfs _size _kver_count _boot_drivers _boot_dracutmodules _initramfs_listing _sound_drivers
+
+# Done with the dracut-install workaround above — /var/roothome was only
+# ever needed as a snapshot target for /root -> /var/roothome to resolve
+# during this build, not as shipped content. Remove it so it doesn't show
+# up as unexplained /var content in bootc container lint's var-tmpfiles
+# check; a deployed system creates its own real /var/roothome independently
+# of anything shipped here (the same way /var/home is populated).
+rmdir /var/roothome
 
 ### Fix bootc-image-builder ISO manifest generation compatibility
 #
