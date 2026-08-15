@@ -84,6 +84,12 @@ To remove the machine from FreeIPA cleanly:
 sudo ipa-client-install --uninstall
 ```
 
+## Login Screen
+
+This image's GDM login screen is meant to list domain accounts, not this image's one local (sudo/wheel) fallback account. GDM's account list is populated by AccountsService as accounts actually log in — this happens the same way for local and domain accounts alike, so domain accounts need nothing special to eventually appear there; a `hide-local-admins-gdm.service` unit runs at every boot to keep the local admin account specifically out of the list (via GDM's `[greeter] Exclude=` mechanism in `/etc/gdm/custom.conf`), since AccountsService has no supported way to reclassify an account as hidden after it's already been created.
+
+Both accounts still log in the same way — the local admin account isn't disabled, just excluded from the clickable list. If GDM shows no account at all yet (e.g. right after first boot, before anyone has logged in), typing a username at the prompt works as normal.
+
 ---
 
 # FreeIPA Join Persistence

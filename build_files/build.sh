@@ -243,6 +243,42 @@ for path in (
         f.write(content)
 PYEOF
 
+### Exclude local sudo accounts from the GDM login screen
+#
+# On a FreeIPA-joined machine, the accounts worth showing on the login
+# screen are domain accounts, not this image's one local (sudo/wheel)
+# fallback account. GDM's clickable user list is driven by
+# AccountsService, which populates it for BOTH local and domain
+# accounts the same way - lazily, as each account actually logs in once
+# (not via sssd's enumerate, which stays at its secure/performant
+# default of false) - so domain accounts need nothing extra here to
+# eventually appear; only the local admin account needs to be kept out.
+#
+# AccountsService has no supported way to do that after the fact: its
+# SystemAccount property is read-only over D-Bus (confirmed live -
+# `busctl --system set-property ... SystemAccount b true` fails with
+# "Property is not writable"), so this can't be flipped once an account
+# already exists. The one mechanism accounts-daemon does honor for this
+# is the classic [greeter] Exclude= list in /etc/gdm/custom.conf -
+# confirmed by the literal path string "/etc/gdm/custom.conf" present
+# in the installed accounts-daemon binary itself, alongside
+# "user %s %ld excluded" tracing exactly this check.
+#
+# The account's username isn't known at image-build time either - it's
+# created after this build, by Anaconda kickstart or gnome-initial-setup
+# depending on which ISO variant is used, with a name the user picks -
+# so the actual exclusion has to happen on the deployed machine, not
+# here. This just ships the script and unit that do it at every boot;
+# see hide-local-admins-gdm.py for the discovery logic (any local
+# /etc/passwd entry, UID >= 1000, in the wheel group) and
+# hide-local-admins-gdm.service for why it has to run before GDM starts
+# and why every boot rather than first-boot-only.
+install -Dm755 /ctx/hide-local-admins-gdm.py \
+    /usr/libexec/hide-local-admins-gdm.py
+install -Dm644 /ctx/hide-local-admins-gdm.service \
+    /usr/lib/systemd/system/hide-local-admins-gdm.service
+systemctl enable hide-local-admins-gdm.service
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the
