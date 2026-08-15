@@ -110,6 +110,90 @@ cp -a "${_ucm_cros_workdir}/overrides/." /usr/share/alsa/ucm2/conf.d/
 rm -rf "${_ucm_cros_workdir}"
 unset _ucm_cros_workdir
 
+### Register a "Chromebook" keyboard input source, selectable in GNOME Settings
+#
+# On Chromebooks converted to run this image via MrChromebox coreboot
+# firmware, every Chromebook-specific key (Search/Launcher -> Super, the
+# action-key top row, the Overview key) is already remapped to its correct
+# evdev keycode by firmware/kernel defaults and picked up generically by
+# /usr/share/X11/xkb/symbols/inet, which every XKB layout includes
+# regardless of which one is active - the same firmware-dependency pattern
+# documented for SOF audio above (see README's "No Sound on Chromebook
+# Hardware" section). Plain "English (US)" therefore already behaves
+# correctly on this hardware, and GNOME's Input Sources picker only ever
+# lists XKB layouts/variants (symbols-level config), never the XKB *model*
+# (set separately, per-machine, via `localectl set-x11-keymap ... chromebook`
+# for keyboard-geometry purposes) - so there is nothing actually broken to
+# fix here.
+#
+# This variant therefore changes no key bindings; it exists purely so
+# "Chromebook" is a real, selectable, unambiguous entry in the picker
+# instead of requiring users to trust that "English (US)" already does the
+# right thing on this hardware.
+
+# Idempotent: guards against a duplicate section if a future
+# xkeyboard-config version ever ships one of this name upstream.
+if ! grep -q 'xkb_symbols "chromebook"' /usr/share/X11/xkb/symbols/us; then
+    cat >> /usr/share/X11/xkb/symbols/us << 'XKBEOF'
+
+// Added by bluefin-freeipa: a labeled alias of us(basic) so "Chromebook"
+// is a selectable GNOME input source. See build.sh for why no key
+// bindings are overridden here.
+xkb_symbols "chromebook" {
+    include "us(basic)"
+    name[Group1] = "English (Chromebook)";
+};
+XKBEOF
+fi
+
+# Register the variant so GNOME's Input Sources picker (and any other
+# libxkbregistry consumer) can find it. xkeyboard-config's *.extras.xml
+# files list "less common" variants merged in alongside the main *.xml
+# rules at query time - this is the standard mechanism the project itself
+# uses for exactly this kind of addition (22 other extra "us" variants
+# already live in the same <layout> block this edits). evdev.xml is what
+# GNOME/Wayland actually query; base.xml/base.extras.xml are kept in sync
+# too since they are byte-identical siblings shipped by the same
+# xkeyboard-config package and some legacy X11-only tools read them
+# instead.
+#
+# Plain text insertion (not an XML-tree parse/rewrite) is deliberate: it's
+# the only way to add one <variant> without reserializing - and thereby
+# reformatting, or silently dropping the DOCTYPE from - the rest of a
+# 250KB+ file neither of us owns.
+python3 - << 'PYEOF'
+for path in (
+    "/usr/share/X11/xkb/rules/evdev.extras.xml",
+    "/usr/share/X11/xkb/rules/base.extras.xml",
+):
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if "English (Chromebook)" in content:
+        continue  # already registered
+
+    anchor = "<description>English (US)</description>"
+    us_idx = content.index(anchor)
+    close_idx = content.index("</variantList>", us_idx)
+    # Insert at the start of the </variantList> line, not right before the
+    # tag itself, so that line's own pre-existing indentation stays where
+    # it is instead of prefixing the inserted block.
+    line_start = content.rfind("\n", 0, close_idx) + 1
+
+    insertion = (
+        "        <variant>\n"
+        '          <configItem popularity="exotic">\n'
+        "            <name>chromebook</name>\n"
+        "            <description>English (Chromebook)</description>\n"
+        "          </configItem>\n"
+        "        </variant>\n"
+    )
+    content = content[:line_start] + insertion + content[line_start:]
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+PYEOF
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the

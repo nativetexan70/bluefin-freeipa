@@ -302,6 +302,14 @@ sof-audio-pci-intel-tgl 0000:00:1f.3: error: dsp init failed after 3 attempts wi
 
 **Fix:** re-enable Intel ME in [MrChromebox's firmware utility](https://mrchromebox.tech) (ME-mode option) and reflash. Once CSE is running, `sof-audio-pci-intel-tgl` completes its firmware boot normally and the SoundWire card (e.g. `rt5682`/`rt1011`) is registered, at which point this image's UCM overlay (see the Containerfile build script) takes over correctly.
 
+## Chromebook Keyboard Input Source
+
+This image registers **"English (Chromebook)"** as a selectable entry in GNOME Settings → Region & Language → Input Sources → Add an Input Source (search "chromebook" if it doesn't show by default).
+
+On Chromebooks converted to run this image via MrChromebox firmware, the Search/Launcher key, the action-key top row (back/forward/refresh/brightness/volume), and the Overview key are already remapped to their correct keycodes by firmware/kernel defaults and picked up automatically by **every** keyboard layout — so plain "English (US)" already behaves correctly on this hardware. Selecting "English (Chromebook)" changes nothing functionally; it exists purely so there's an explicit, unambiguous option to pick instead of having to trust that "English (US)" already does the right thing.
+
+(Separately, `localectl set-x11-keymap <layout> <variant> chromebook` sets the XKB *model* to `chromebook`, which only affects on-screen-keyboard geometry graphics — it's not related to and doesn't need to be paired with the input source above.)
+
 ---
 
 # Building the Image Locally
