@@ -36,10 +36,24 @@ FROM ghcr.io/ublue-os/bluefin:stable
 ## anything written there once the step completes, the same way the existing
 ## /tmp mount already does — nothing in build_files/ reads /run afterward, so
 ## nothing here depends on that content surviving into the image.
+##
+## /var/lib/dnf gets its own cache mount for a related reason: dnf5's own repo
+## metadata cache, transaction lock file, and per-repo countme markers land
+## under /var/lib/dnf as a side effect of the package install below, and
+## bootc container lint's var-tmpfiles check flags them too. Unlike /run,
+## /var genuinely needs to persist for other paths (e.g. FreeIPA/sssd state),
+## so it can't just be tmpfs-mounted wholesale — but /var/lib/dnf specifically
+## has no purpose on a deployed bootc system at all: packages are never
+## updated via dnf here (see "Fix bootc-image-builder ISO manifest generation
+## compatibility" in build.sh), only via cosign-verified OCI image pulls.
+## A cache mount (rather than tmpfs) keeps
+## dnf5's metadata around *between* builds for speed, while still excluding
+## it from the committed image layer, same as /var/cache and /var/log above.
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
+    --mount=type=cache,dst=/var/lib/dnf \
     --mount=type=tmpfs,dst=/tmp \
     --mount=type=tmpfs,dst=/run \
     bash /ctx/build.sh
