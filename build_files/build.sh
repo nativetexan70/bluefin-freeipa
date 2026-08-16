@@ -22,6 +22,8 @@ set -ouex pipefail
 # support (see below); fedora-logos restores stock Fedora branding (see
 # "Branding" below); zstd is the compressor the initramfs regeneration
 # below asks dracut to use, listed explicitly rather than assumed present.
+# powertop provides the --auto-tune power-saving profile applied at boot
+# by powertop-autotune.service (see below).
 # --allowerasing is required for fedora-logos, which conflicts with
 # generic-logos (the Bluefin base image's replacement for it) — it only
 # erases packages that actually conflict, so it's safe to apply to the
@@ -34,6 +36,7 @@ dnf5 install -y --allowerasing \
     alsa-sof-firmware \
     alsa-ucm \
     fedora-logos \
+    powertop \
     zstd
 
 ### Preserve FreeIPA join state across bootc updates
@@ -316,6 +319,21 @@ install -Dm644 /ctx/95-hibernation-resume.conf \
 # an mmcblk* device. See 96-mmc-storage.conf for details.
 install -Dm644 /ctx/96-mmc-storage.conf \
     /usr/lib/dracut/dracut.conf.d/96-mmc-storage.conf
+
+### Apply PowerTOP's power-saving auto-tune profile at every boot
+#
+# `powertop --auto-tune` applies powertop's recommended runtime power-saving
+# settings (e.g. USB/PCI/audio autosuspend, SATA link power management).
+# These settings live in volatile kernel/sysfs state, not on disk, so they
+# don't persist across reboots on their own and have to be re-applied every
+# boot rather than once at image build time. Type=oneshot + RemainAfterExit
+# runs it once per boot and reports the unit as active afterward, the same
+# shape used elsewhere in this image for a run-once-at-boot action (see
+# hide-local-admins-gdm.service, which instead runs every boot for a
+# different reason — no analogous "state resets on reboot" need here).
+install -Dm644 /ctx/powertop-autotune.service \
+    /usr/lib/systemd/system/powertop-autotune.service
+systemctl enable powertop-autotune.service
 
 ### Enable required system units
 
