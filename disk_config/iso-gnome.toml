@@ -8,6 +8,9 @@ bootc switch --mutate-in-place --transport registry ghcr.io/personalcyber/bluefi
 # background updates work after first login.
 flatpak remote-add --if-not-exists --system flathub https://flathub.org/repo/flathub.flatpakrepo
 
+# Install Trayscale (Tailscale GUI client) system-wide.
+flatpak install --system --noninteractive flathub dev.deedles.Trayscale
+
 # Enable background Flatpak update timer for all users.
 systemctl --global enable flatpak-user-update.timer || true
 %end
