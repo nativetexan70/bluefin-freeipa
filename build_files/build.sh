@@ -20,14 +20,19 @@ set -ouex pipefail
 #
 # alsa-sof-firmware/alsa-ucm are for Chromebook SoundWire/SOF audio
 # support (see below); fedora-logos restores stock Fedora branding (see
-# "Branding" below); zstd is the compressor the initramfs regeneration
-# below asks dracut to use, listed explicitly rather than assumed present.
+# "Branding" below); f<ver>-backgrounds-gnome supplies the current stock
+# Fedora default wallpaper (see "Wallpaper" below), versioned off this
+# build's own Fedora release so it never goes stale on a Fedora bump the
+# way a hardcoded package name would; zstd is the compressor the
+# initramfs regeneration below asks dracut to use, listed explicitly
+# rather than assumed present.
 # powertop provides the --auto-tune power-saving profile applied at boot
 # by powertop-autotune.service (see below).
 # --allowerasing is required for fedora-logos, which conflicts with
 # generic-logos (the Bluefin base image's replacement for it) — it only
 # erases packages that actually conflict, so it's safe to apply to the
 # whole transaction rather than isolating it to just that one package.
+_fedora_ver="$(rpm -E %fedora)"
 dnf5 install -y --allowerasing \
     freeipa-client \
     oddjob \
@@ -36,6 +41,7 @@ dnf5 install -y --allowerasing \
     alsa-sof-firmware \
     alsa-ucm \
     fedora-logos \
+    "f${_fedora_ver}-backgrounds-gnome" \
     powertop \
     zstd
 
@@ -357,16 +363,27 @@ install -Dm644 /ctx/registries.d-personalcyber.yaml \
 
 ### Branding — replace Bluefin logos throughout
 #
-# Bluefin ships logo files in three places that are visible to users:
+# Bluefin ships logo files in a few places that are visible to users. Boot
+# and OS iconography is restored to stock Fedora artwork rather than
+# Universal Blue branding, since that's the first (and most systemic)
+# graphic set users see:
 #
 #   1. Plymouth boot watermark (/usr/share/plymouth/themes/spinner/watermark.png)
-#      Restored to stock Fedora artwork (see below) rather than Universal
-#      Blue branding, since it's the first graphic users see when booting.
-#   2. GDM login screen logo  (/usr/share/pixmaps/fedora-gdm-logo.png)
-#      and related pixmap files — Universal Blue branding
-#   3. GNOME Shell Logo Menu  (/usr/share/icons/hicolor/scalable/actions/
-#                               ublue-logo-symbolic.svg) — Universal Blue
-#      branding
+#   2. GDM login screen logo (/usr/share/pixmaps/fedora-gdm-logo.png and
+#      related pixmap files) and the Anaconda installer sidebar logo
+#      (/usr/share/anaconda/pixmaps/silverblue/sidebar-logo.png) — both
+#      shipped directly by fedora-logos (installed above with
+#      --allowerasing over Bluefin's generic-logos), so no override is
+#      needed for either.
+#
+# Two spots keep Universal Blue branding deliberately — they're
+# distro-identity touches (a shell extension icon, a terminal banner)
+# rather than boot/OS iconography, so they're out of scope for the
+# fedora-branding revert above:
+#
+#   3. GNOME Shell Logo Menu (/usr/share/icons/hicolor/scalable/actions/
+#                               ublue-logo-symbolic.svg)
+#   4. Fastfetch terminal logo (see below)
 #
 # The bgrt Plymouth theme only shows bgrt-fallback.png when no UEFI firmware
 # logo is present. Switching to the spinner theme ensures the watermark is
@@ -385,15 +402,6 @@ install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
 install -Dm644 /usr/share/plymouth/themes/spinner/watermark.png \
     /usr/share/plymouth/themes/spinner/silverblue-watermark.png
 plymouth-set-default-theme spinner
-
-# GDM login screen and system pixmaps (400x101 horizontal wordmark)
-for _pixmap in fedora-gdm-logo.png fedora-logo.png fedora-logo-icon.png \
-               fedora-logo-small.png fedora-logo-sprite.png \
-               fedora_logo_med.png fedora_whitelogo_med.png \
-               system-logo-white.png; do
-    install -Dm644 /ctx/ublue-logo-gdm.png "/usr/share/pixmaps/${_pixmap}"
-done
-unset _pixmap
 
 # GNOME Shell icon (Logo Menu extension + custom-command-list panel button)
 install -Dm644 /ctx/ublue-logo-symbolic.svg \
@@ -422,17 +430,47 @@ install -Dm644 /ctx/ublue-logo.png \
 rm -f /usr/share/ublue-os/bluefin-logos/sixels/bluefin
 rm -f /usr/share/ublue-os/bluefin-logos/symbols/bluefin
 
-# Anaconda installer sidebar logo — shown during ISO installs built via BIB.
-# install -D creates the destination directory tree if it does not exist.
-install -Dm644 /ctx/ublue-logo-gdm.png \
-    /usr/share/anaconda/pixmaps/silverblue/sidebar-logo.png
-
 # Bluefin help desktop entry — update name (entry is NoDisplay=true;
 # only visible in default-app pickers for help:// URI schemes).
 if [[ -f /usr/share/applications/bluefin-help.desktop ]]; then
     sed -i 's/^Name=.*/Name=Universal Blue Help/' \
         /usr/share/applications/bluefin-help.desktop
 fi
+
+### Wallpaper — use Fedora's default background instead of Bluefin's
+#
+# Bluefin ships its own bluefin-wallpapers package and sets it as the
+# GNOME default. Rather than tracking down and undoing whatever mechanism
+# Bluefin used to make that the default (it isn't a simple Conflicts-based
+# package swap the way generic-logos/fedora-logos is), this forces the
+# stock Fedora default background via the same /etc/dconf/db/distro.d
+# override mechanism already used above for the Logo Menu icon — a dconf
+# override is guaranteed to win over whatever set the previous default,
+# without needing to know or replicate that mechanism.
+#
+# f<ver>-backgrounds-gnome (installed above, versioned off this build's own
+# Fedora release) ships the current-year default under
+# /usr/share/backgrounds/f<ver>/default/ as a day/night pair; the exact
+# filenames (extension and numbering) have changed across Fedora releases,
+# so they're discovered here instead of hardcoded, the same way the audio
+# and initramfs sections above discover driver names rather than pinning
+# them.
+_bg_dir="/usr/share/backgrounds/f${_fedora_ver}/default"
+_bg_day="$(find "${_bg_dir}" -maxdepth 1 -type f -iname '*day*' | sort | head -n1)"
+_bg_night="$(find "${_bg_dir}" -maxdepth 1 -type f -iname '*night*' | sort | head -n1)"
+# Fail the build rather than silently keeping Bluefin's wallpaper if
+# f<ver>-backgrounds-gnome's layout ever changes shape.
+[[ -n "${_bg_day}" && -n "${_bg_night}" ]]
+
+install -dm755 /etc/dconf/db/distro.d
+cat > /etc/dconf/db/distro.d/07-fedora-wallpaper << DCONFEOF
+[org/gnome/desktop/background]
+picture-uri='file://${_bg_day}'
+picture-uri-dark='file://${_bg_night}'
+picture-options='zoom'
+DCONFEOF
+dconf update
+unset _fedora_ver _bg_dir _bg_day _bg_night
 
 # Rebuild the initramfs so the updated Plymouth assets and theme selection
 # are baked into the deployed boot image.
