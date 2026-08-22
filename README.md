@@ -179,6 +179,8 @@ In both cases, the user must log out and back in (or run `newgrp brew`) for the 
 > [!NOTE]
 > Users not in the `brew` group can still run any package that is already installed. Only writing new packages to the shared prefix requires group membership.
 
+New packages you install stay writable for every `brew` group member afterward too — the prefix carries a default ACL (set up by `homebrew-install.service`) granting the `brew` group write access to anything created under it later, so a `brew install` you run isn't left owned by a group but with permission bits your own umask happened to strip.
+
 ## /etc Directory Skeleton
 
 `ipa-client-install` writes its configuration into `/etc/ipa/`, `/etc/sssd/`, and `/etc/krb5.conf`. For bootc's three-way `/etc` merge to treat those files as local additions (and therefore never overwrite them on update), the directories must exist in the image but must contain no config file content.

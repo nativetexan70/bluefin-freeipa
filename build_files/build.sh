@@ -28,6 +28,11 @@ set -ouex pipefail
 # rather than assumed present.
 # powertop provides the --auto-tune power-saving profile applied at boot
 # by powertop-autotune.service (see below).
+# acl provides setfacl/getfacl, used by homebrew-install.sh's first-boot
+# Homebrew install to set a default ACL on the shared Homebrew prefix -
+# needed so newly created Cellar/etc. entries stay group-writable for
+# every 'brew' group member regardless of that user's umask (plain
+# chmod/setgid alone isn't enough - see homebrew-install.sh).
 # --allowerasing is required for fedora-logos, which conflicts with
 # generic-logos (the Bluefin base image's replacement for it) — it only
 # erases packages that actually conflict, so it's safe to apply to the
@@ -38,6 +43,7 @@ dnf5 install -y --allowerasing \
     oddjob \
     oddjob-mkhomedir \
     policycoreutils-python-utils \
+    acl \
     alsa-sof-firmware \
     alsa-ucm \
     fedora-logos \
