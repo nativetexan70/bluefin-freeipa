@@ -310,7 +310,7 @@ sof-audio-pci-intel-tgl 0000:00:1f.3: error: dsp init failed after 3 attempts wi
 
 ## Chromebook Keyboard Input Source
 
-This image registers **"English (Chromebook)"** as a selectable entry in GNOME Settings → Region & Language → Input Sources → Add an Input Source (search "chromebook" if it doesn't show by default). Selecting it is what activates everything below — plain "English (US)" is left as a completely standard layout.
+This image registers **"English (Chromebook)"** as a selectable entry in GNOME Settings → Region & Language → Input Sources → Add an Input Source. Selecting it is what activates everything below — plain "English (US)" is left as a completely standard layout.
 
 On Chromebooks converted to run this image via MrChromebox firmware, the Search/Launcher key, the action-key top row (back/forward/refresh/brightness/volume), and the Overview key are already remapped to their correct keycodes by firmware/kernel defaults and picked up automatically by **every** keyboard layout, so those parts need nothing from this variant. What it adds is the ChromeOS Search-key combos that need somewhere to go — this hardware has no dedicated Home, End, Page Up, Page Down, or Delete keys at all, since ChromeOS only ever reaches them via `Search` held with another key. Since `Search` is already this image's `Super` key, there's no key left free to play that role, so the Chromebook variant uses **Right Alt** instead:
 

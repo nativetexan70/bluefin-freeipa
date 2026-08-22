@@ -219,6 +219,15 @@ dconf update
 # xkeyboard-config package and some legacy X11-only tools read them
 # instead.
 #
+# popularity="standard" (not "exotic", unlike the other 22 variants in
+# this same file) is deliberate: gnome-control-center's Input Sources
+# "Add an Input Source" dialog only lists exotic-popularity entries once
+# the user opts in via GNOME Tweaks' "Additional Layouts"/extended-sources
+# toggle - confirmed live, the variant was otherwise invisible in the
+# default picker and only appeared after flipping that switch. This
+# variant is a first-class feature of this image, not a legacy/rare
+# layout, so it needs to show up in the default list with no extra
+# per-machine toggle required.
 # Plain text insertion (not an XML-tree parse/rewrite) is deliberate: it's
 # the only way to add one <variant> without reserializing - and thereby
 # reformatting, or silently dropping the DOCTYPE from - the rest of a
@@ -244,7 +253,7 @@ for path in (
 
     insertion = (
         "        <variant>\n"
-        '          <configItem popularity="exotic">\n'
+        '          <configItem popularity="standard">\n'
         "            <name>chromebook</name>\n"
         "            <description>English (Chromebook)</description>\n"
         "          </configItem>\n"
