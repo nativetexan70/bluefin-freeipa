@@ -1,21 +1,23 @@
 [Unit]
-Description=Install Homebrew for all users (first boot only)
+Description=Install Homebrew for all users, and keep its group/permissions correct
 # Homebrew's installer needs to fetch itself and every formula it bootstraps
-# with over the network; there is no useful offline fallback.
+# with over the network; there is no useful offline fallback. The actual
+# install only ever runs once (homebrew-install.sh checks for an existing
+# `brew` binary itself), but this unit intentionally has no
+# ConditionPathExists gate on that: it also re-normalizes the prefix's
+# group ownership/permissions every boot, which must keep running even
+# after Homebrew is installed - see homebrew-install.sh for why.
 After=network-online.target
 Wants=network-online.target
-# Skips (not fails) on every later boot once the install has completed,
-# so this unit is safe to leave enabled permanently rather than needing to
-# disable itself after running.
-ConditionPathExists=!/var/home/linuxbrew/.linuxbrew/bin/brew
 
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/homebrew-install.sh
-# No RemainAfterExit: the ConditionPathExists check above is what makes
-# this idempotent across boots, not systemd's active-state tracking. A
-# failed attempt (e.g. no network on first boot) is expected to just be
-# retried on the next boot, which a plain oneshot already does.
+# No RemainAfterExit: this unit is meant to actually run and do its
+# (idempotent) work on every boot, not just once. A failed attempt (e.g.
+# no network on first boot, before Homebrew is installed at all) is
+# expected to just be retried on the next boot, which a plain oneshot
+# already does.
 
 [Install]
 WantedBy=multi-user.target
