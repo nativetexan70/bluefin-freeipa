@@ -133,7 +133,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `sssd` | System Security Services Daemon — handles Kerberos authentication, LDAP user/group lookups, and caching for the FreeIPA domain. |
 | `oddjobd` | D-Bus daemon for `oddjob`. Must be running for `pam_oddjob_mkhomedir` to create home directories at login. |
 | `podman.socket` | Inherited from the Bluefin base; retained for rootless container support. |
-| `homebrew-install.service` | One-time, first-boot-only unit that installs Homebrew (see below). Skips on every later boot once installed. |
+| `homebrew-install.service` | Installs Homebrew on first boot with network, then re-normalizes its shared prefix's group/permissions on every subsequent boot (see below). |
 
 ## Homebrew
 
@@ -143,12 +143,14 @@ The brew environment is sourced automatically for all login and interactive shel
 
 ### Installed on first boot, not baked into the image
 
-Unlike most of this image's other content, Homebrew is **not** present at `t=0` of first boot — it's installed by a one-time `systemd` unit (`homebrew-install.service`) the first time the machine boots with network access, then never touched again. The `linuxbrew` user/`brew` group themselves *are* present from the very first boot (declared in the image via a pinned `systemd-sysusers.d` entry); only the actual Homebrew files are deferred.
+Unlike most of this image's other content, Homebrew is **not** present at `t=0` of first boot — it's installed by a `systemd` unit (`homebrew-install.service`) the first time the machine boots with network access. The `linuxbrew` user/`brew` group themselves *are* present from the very first boot (declared in the image via a pinned `systemd-sysusers.d` entry); only the actual Homebrew files are deferred.
+
+The install itself only ever happens once, but the same unit also runs on *every* boot after that to re-apply the shared prefix's `brew` group ownership, setgid bit, and default ACL (see "Installing new packages" below). This is deliberate self-healing, not redundant work: Homebrew's official installer sets the prefix's group to whichever account happens to run it, so if a human ever bootstraps Homebrew manually (for example, by following brew.sh's own instructions before this unit gets network on first boot) instead of letting this unit do it, the prefix comes out owned by *that person's own* group instead of `brew` — re-running the fixup every boot corrects that regardless of who or what created the tree first.
 
 This means:
-- **First boot needs network access** before `brew` actually works. If the very first boot has no network, the install unit fails harmlessly and retries automatically on the next boot.
-- Once installed, Homebrew is never touched by `bootc upgrade` — ostree only seeds `/var` from the image on a machine's first deployment, so the install is effectively permanent per-machine from that point on, the same as if it had shipped in the image. Packages you install via `brew` afterward are equally unaffected by image updates.
-- You can check progress or force a retry with `systemctl status homebrew-install.service` / `sudo systemctl restart homebrew-install.service`.
+- **First boot needs network access** before `brew` actually works. If the very first boot has no network, the install portion fails harmlessly and retries automatically on the next boot.
+- Once installed, Homebrew itself is never touched by `bootc upgrade` — ostree only seeds `/var` from the image on a machine's first deployment, so the install is effectively permanent per-machine from that point on, the same as if it had shipped in the image. Packages you install via `brew` afterward are equally unaffected by image updates.
+- You can check progress or force a retry (including a one-off group/permission fixup) with `systemctl status homebrew-install.service` / `sudo systemctl restart homebrew-install.service`.
 
 ### Running installed packages
 
