@@ -1,0 +1,14 @@
+[Unit]
+Description=Set the current user as the Tailscale operator (for trayscale)
+Documentation=file:///usr/libexec/tailscale-set-operator.sh
+# Only meaningful once tailscale is actually present; a soft skip rather
+# than a failure if a future base image build doesn't have it.
+ConditionPathExists=/usr/bin/tailscale
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sudo -n /usr/libexec/tailscale-set-operator.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical-session.target

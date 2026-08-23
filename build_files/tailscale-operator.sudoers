@@ -1,0 +1,9 @@
+# Lets any user run tailscale-set-operator (which sets *only the invoking
+# user* as the Tailscale operator - see that script) as root, without a
+# password. This is what lets trayscale work for every user, not just
+# whichever one manually runs `sudo tailscale set --operator=$USER` first;
+# tailscale-set-operator.service does this automatically at every login.
+#
+# No wildcard on the command: the script takes no arguments, so this rule
+# can match its exact path rather than a pattern.
+ALL ALL=(root) NOPASSWD: /usr/libexec/tailscale-set-operator.sh
