@@ -307,6 +307,33 @@ install -Dm644 /ctx/hide-local-admins-gdm.service \
     /usr/lib/systemd/system/hide-local-admins-gdm.service
 systemctl enable hide-local-admins-gdm.service
 
+### Let every user run Tailscale/trayscale without a manual sudo step
+#
+# By default only root can control tailscaled, so trayscale (which has no
+# privilege-escalation UI of its own) does nothing for a normal user until
+# someone runs `sudo tailscale set --operator=$USER` for them - and that
+# only ever grants operator status to whichever one user last ran it, since
+# it's a single value in tailscaled's own state. On a shared/domain-joined
+# machine where any user might log in, that means it has to be re-applied
+# per user rather than once at setup time.
+#
+# tailscale-set-operator (shipped to /usr/libexec) sets *only the invoking
+# user* as operator, reading who that is from SUDO_USER rather than an
+# argument - so the sudoers rule granting it NOPASSWD access can match its
+# exact path with no wildcard, and a user can never make anyone but
+# themselves the operator. tailscale-set-operator.service runs it via sudo
+# at every graphical login (WantedBy=graphical-session.target, a per-user
+# unit), so whichever user is currently logged in becomes the operator
+# automatically, with no manual step and no password prompt.
+install -Dm755 /ctx/tailscale-set-operator.sh \
+    /usr/libexec/tailscale-set-operator.sh
+install -Dm440 /ctx/tailscale-operator.sudoers \
+    /etc/sudoers.d/tailscale-operator
+visudo -cf /etc/sudoers.d/tailscale-operator
+install -Dm644 /ctx/tailscale-set-operator.service \
+    /usr/lib/systemd/user/tailscale-set-operator.service
+systemctl --global enable tailscale-set-operator.service
+
 ### Ship custom ujust recipes
 #
 # Files placed at /usr/share/ublue-os/just/*.just are auto-imported by the

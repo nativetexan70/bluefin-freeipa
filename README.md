@@ -90,6 +90,14 @@ This image's GDM login screen is meant to list domain accounts, not this image's
 
 Both accounts still log in the same way — the local admin account isn't disabled, just excluded from the clickable list. If GDM shows no account at all yet (e.g. right after first boot, before anyone has logged in), typing a username at the prompt works as normal.
 
+## Tailscale/Trayscale Operator
+
+By default, only `root` can control `tailscaled` — normally you'd fix that for yourself by running `sudo tailscale set --operator=$USER` once. [Trayscale](https://github.com/DeedleFake/trayscale) (a GTK tray UI for Tailscale) has no privilege-escalation UI of its own, so without that step it can't do anything for you.
+
+This image applies that step automatically, for whichever user is currently logged in, at every graphical login — no manual command and no password prompt needed. This matters specifically because `tailscaled` only tracks a single operator at a time: on a shared or domain-joined machine where different users log in over time, a one-time manual fix would only ever cover whoever ran it last. A `tailscale-set-operator.service` user unit re-applies operator status to the current user on every login instead, so it stays correct as different accounts log in.
+
+The unit runs `/usr/libexec/tailscale-set-operator` via a narrowly-scoped `sudoers.d` NOPASSWD rule. That script takes no arguments — it always sets the operator to whichever user invoked it (read from `SUDO_USER`, which `sudo` always sets) — so a user can only ever make *themselves* the operator, never another account. If `tailscale` isn't installed, the unit is a no-op.
+
 ---
 
 # FreeIPA Join Persistence
@@ -134,6 +142,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `oddjobd` | D-Bus daemon for `oddjob`. Must be running for `pam_oddjob_mkhomedir` to create home directories at login. |
 | `podman.socket` | Inherited from the Bluefin base; retained for rootless container support. |
 | `homebrew-install.service` | Installs Homebrew on first boot with network, then re-normalizes its shared prefix's group/permissions on every subsequent boot (see below). |
+| `tailscale-set-operator.service` | Per-user unit; sets the currently logging-in user as the Tailscale operator at every graphical login, so trayscale works without a manual `sudo` step (see "Tailscale/Trayscale Operator" above). |
 
 ## Homebrew
 
