@@ -134,7 +134,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `oddjob` | D-Bus service that allows `sssd` to perform privileged operations (e.g. creating home directories) on behalf of unprivileged processes. |
 | `oddjob-mkhomedir` | PAM module and helper that automatically creates a home directory on first login for domain users. |
 | `thermald` | Intel's thermal daemon; proactively throttles 12th-gen ("Alder Lake") hybrid P-core/E-core CPUs against their DPTF thermal tables instead of relying solely on the kernel's coarser emergency cutoffs. |
-| `intel-media-driver` | "iHD" VA-API backend giving hardware video encode/decode on Intel Gen9+ (including Alder Lake Xe-LP) integrated graphics — see the `LIBVA_DRIVER_NAME` default below. |
+| `libva-intel-media-driver` | "iHD" VA-API backend giving hardware video encode/decode on Intel Gen9+ (including Alder Lake Xe-LP) integrated graphics — see the `LIBVA_DRIVER_NAME` default below. |
 
 ## Systemd Units Enabled
 
@@ -316,7 +316,7 @@ This image's primary target is a 12th-gen Intel ("Alder Lake") Lenovo laptop, an
 
 - **`thermald`** — Intel's own thermal daemon, enabled at boot. It reads the platform's DPTF thermal tables and throttles proactively, ahead of the kernel's own coarser emergency thermal cutoffs, which otherwise tend to show up as abrupt frequency cliffs under sustained load on hybrid-core CPUs.
 - **`i915` GuC/HuC submission + framebuffer compression** — `/etc/modprobe.d/i915-power.conf` sets `enable_guc=3` (GPU-side command scheduling plus HuC firmware for hardware video encode/decode) and `enable_fbc=1` (framebuffer compression, cutting display-memory bandwidth whenever most of the screen is static). Panel Self Refresh (PSR) is deliberately left at the kernel's own per-platform default rather than forced on — it saves more power than FBC alone, but its panel-corruption bugs are panel-specific, so it isn't safe to force on generically across "whatever 12th-gen Lenovo laptop this image happens to be running on."
-- **`intel-media-driver` (VA-API "iHD" backend)** — installed and pinned as the default VA-API driver (`/etc/environment.d/10-intel-vaapi.conf`, `LIBVA_DRIVER_NAME=iHD`) rather than left to libva's own runtime auto-detection. This is what actually exercises the hardware video encode/decode path the HuC firmware above is loaded for — without both pieces together, video playback and encoding silently fall back to software, which costs far more battery.
+- **`libva-intel-media-driver` (VA-API "iHD" backend)** — installed and pinned as the default VA-API driver (`/etc/environment.d/10-intel-vaapi.conf`, `LIBVA_DRIVER_NAME=iHD`) rather than left to libva's own runtime auto-detection. This is what actually exercises the hardware video encode/decode path the HuC firmware above is loaded for — without both pieces together, video playback and encoding silently fall back to software, which costs far more battery. (Fedora's own package for this driver is named `libva-intel-media-driver`, not `intel-media-driver` — the latter is only how upstream/RPM Fusion name it.)
 
 ## Troubleshooting: No Sound on Chromebook Hardware (SOF DSP Boot Failure)
 

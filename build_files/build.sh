@@ -35,11 +35,15 @@ set -ouex pipefail
 # has to step in, which otherwise tends to show up as abrupt, coarse
 # frequency cliffs under sustained load rather than the smoother ramp
 # thermald manages.
-# intel-media-driver is the "iHD" VA-API backend for Intel's Gen9+ (which
-# includes Alder Lake's Xe-LP) integrated graphics, giving hardware video
-# encode/decode instead of a software fallback — see the LIBVA_DRIVER_NAME
-# default and enable_guc=3/HuC note below for why both pieces are needed
-# together.
+# libva-intel-media-driver provides the "iHD" VA-API backend for Intel's
+# Gen9+ (which includes Alder Lake's Xe-LP) integrated graphics, giving
+# hardware video encode/decode instead of a software fallback — see the
+# LIBVA_DRIVER_NAME default and enable_guc=3/HuC note below for why both
+# pieces are needed together. Note the package name: upstream/RPM Fusion
+# call it "intel-media-driver", but Fedora's own (MIT-licensed, patent-
+# unencumbered) build of the same driver ships it as "libva-intel-media-
+# driver" (source package intel-media-driver-free) — "intel-media-driver"
+# itself resolves to nothing in this image's enabled repos.
 # acl provides setfacl/getfacl, used by homebrew-install.sh's first-boot
 # Homebrew install to set a default ACL on the shared Homebrew prefix -
 # needed so newly created Cellar/etc. entries stay group-writable for
@@ -62,7 +66,7 @@ dnf5 install -y --allowerasing \
     "f${_fedora_ver}-backgrounds-gnome" \
     powertop \
     thermald \
-    intel-media-driver \
+    libva-intel-media-driver \
     zstd
 
 ### Preserve FreeIPA join state across bootc updates
@@ -417,7 +421,7 @@ systemctl enable thermald.service
 install -Dm644 /ctx/i915-power.conf \
     /etc/modprobe.d/i915-power.conf
 
-# Default VA-API to intel-media-driver's "iHD" backend rather than relying
+# Default VA-API to libva-intel-media-driver's "iHD" backend rather than relying
 # on libva's own runtime auto-detection, which resolves the driver name
 # from the bound kernel driver and can land on the legacy i965 backend
 # instead of iHD depending on exactly which VA-API packages a given
