@@ -133,6 +133,8 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `freeipa-client` | Core FreeIPA client tooling (`ipa-client-install`, `ipa` CLI). Also pulls in `sssd`, `krb5-workstation`, `certmonger`, and other required dependencies. |
 | `oddjob` | D-Bus service that allows `sssd` to perform privileged operations (e.g. creating home directories) on behalf of unprivileged processes. |
 | `oddjob-mkhomedir` | PAM module and helper that automatically creates a home directory on first login for domain users. |
+| `thermald` | Intel's thermal daemon; proactively throttles 12th-gen ("Alder Lake") hybrid P-core/E-core CPUs against their DPTF thermal tables instead of relying solely on the kernel's coarser emergency cutoffs. |
+| `intel-media-driver` | "iHD" VA-API backend giving hardware video encode/decode on Intel Gen9+ (including Alder Lake Xe-LP) integrated graphics — see the `LIBVA_DRIVER_NAME` default below. |
 
 ## Systemd Units Enabled
 
@@ -143,6 +145,7 @@ This image is built on top of `ghcr.io/ublue-os/bluefin:stable` and makes the fo
 | `podman.socket` | Inherited from the Bluefin base; retained for rootless container support. |
 | `homebrew-install.service` | Installs Homebrew on first boot with network, then re-normalizes its shared prefix's group/permissions on every subsequent boot (see below). |
 | `tailscale-set-operator.service` | Per-user unit; sets the currently logging-in user as the Tailscale operator at every graphical login, so trayscale works without a manual `sudo` step (see "Tailscale/Trayscale Operator" above). |
+| `thermald.service` | Intel thermal daemon (see "Packages Added" above). |
 
 ## Homebrew
 
@@ -306,6 +309,14 @@ systemctl reboot
 
 > [!NOTE]
 > If you are switching from a non-bootc system or a completely different distribution, a fresh install from the [installer ISO](#building-disk-images-locally) is the more reliable path.
+
+## 12th-Gen Intel Laptop Power Management and Graphics
+
+This image's primary target is a 12th-gen Intel ("Alder Lake") Lenovo laptop, and ships three pieces tuned for that hybrid P-core/E-core CPU and its Xe-LP integrated GPU, layered on top of the hardware-agnostic PowerTOP auto-tune (see above):
+
+- **`thermald`** — Intel's own thermal daemon, enabled at boot. It reads the platform's DPTF thermal tables and throttles proactively, ahead of the kernel's own coarser emergency thermal cutoffs, which otherwise tend to show up as abrupt frequency cliffs under sustained load on hybrid-core CPUs.
+- **`i915` GuC/HuC submission + framebuffer compression** — `/etc/modprobe.d/i915-power.conf` sets `enable_guc=3` (GPU-side command scheduling plus HuC firmware for hardware video encode/decode) and `enable_fbc=1` (framebuffer compression, cutting display-memory bandwidth whenever most of the screen is static). Panel Self Refresh (PSR) is deliberately left at the kernel's own per-platform default rather than forced on — it saves more power than FBC alone, but its panel-corruption bugs are panel-specific, so it isn't safe to force on generically across "whatever 12th-gen Lenovo laptop this image happens to be running on."
+- **`intel-media-driver` (VA-API "iHD" backend)** — installed and pinned as the default VA-API driver (`/etc/environment.d/10-intel-vaapi.conf`, `LIBVA_DRIVER_NAME=iHD`) rather than left to libva's own runtime auto-detection. This is what actually exercises the hardware video encode/decode path the HuC firmware above is loaded for — without both pieces together, video playback and encoding silently fall back to software, which costs far more battery.
 
 ## Troubleshooting: No Sound on Chromebook Hardware (SOF DSP Boot Failure)
 
