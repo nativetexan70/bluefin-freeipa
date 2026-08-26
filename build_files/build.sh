@@ -808,3 +808,25 @@ if [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
 fi
 BREWEOF
 chmod 644 /etc/profile.d/brew.sh
+
+### Ship a system-wide Firefox policy for Flatpak Firefox installs
+#
+# Bluefin ships Firefox as a Flatpak, and the Flatpak build is sandboxed
+# away from the /etc/firefox path native-package Firefox reads policy
+# from. The only system-wide policies.json location it does honor is
+# the org.mozilla.firefox.systemconfig Flatpak extension's directory
+# under /var/lib/flatpak - see firefox-flatpak-policy-install.sh for the
+# exact path and why populating it has to be deferred to a runtime
+# script/unit rather than done here at build time (same underlying
+# reason as the Homebrew install above: /var/lib/flatpak isn't part of
+# this image's own /var at build time).
+#
+# The policy content itself just ships as a plain data file under
+# /usr/share, for the runtime script to copy from.
+install -Dm644 /ctx/firefox-flatpak-policies.json \
+    /usr/share/bluefin-freeipa/firefox-flatpak-policies.json
+install -Dm755 /ctx/firefox-flatpak-policy-install.sh \
+    /usr/libexec/firefox-flatpak-policy-install.sh
+install -Dm644 /ctx/firefox-flatpak-policy.service \
+    /usr/lib/systemd/system/firefox-flatpak-policy.service
+systemctl enable firefox-flatpak-policy.service
