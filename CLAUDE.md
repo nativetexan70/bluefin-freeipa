@@ -51,6 +51,7 @@ The `Containerfile`'s final `RUN bootc container lint` must pass with zero warni
 - **Change CI behavior or image metadata**: Edit `.github/workflows/build.yml`
 - **Add/change declarative `/var` state directories**: Edit `build_files/var-state.conf`
 - **Change Homebrew's first-boot install logic**: Edit `build_files/homebrew-install.sh` (install logic) or `.service` (unit/conditions); account UID/GID pinning lives in `build_files/homebrew-sysusers.conf`
+- **Change the `sysadmins` group's PolicyKit admin authority**: Edit `build_files/polkit-sysadmins-admin.rules`
 
 ### FreeIPA Join Persistence
 
@@ -63,6 +64,12 @@ The goal is for GDM's account list to show domain accounts, not this image's one
 There's no supported way to do that after the fact via AccountsService's own API: its `SystemAccount` property is read-only over D-Bus — confirmed live (`busctl --system set-property ... org.freedesktop.Accounts.User SystemAccount b true` fails with `Property "SystemAccount" is not writable`), so an already-created account can't be reclassified as hidden. The mechanism accounts-daemon does honor for this is the classic `[greeter] Exclude=` list in `/etc/gdm/custom.conf` — confirmed by the literal path string `/etc/gdm/custom.conf` present in the installed `accounts-daemon` binary itself (`strings /usr/libexec/accounts-daemon`), alongside `"user %s %ld excluded"` tracing exactly this check.
 
 The account's username isn't knowable at image-build time either — it's created later, by Anaconda kickstart or `gnome-initial-setup` depending on which ISO variant is used, with a name the user picks — so the exclusion itself has to run on the deployed machine. `build.sh` ships `hide-local-admins-gdm.py` (installed to `/usr/libexec/`) plus a `hide-local-admins-gdm.service` unit (`Before=display-manager.service`, `WantedBy=graphical.target`, enabled at build time) that runs the script at every boot, not just first boot — the account may not exist yet at very first boot (`gnome-initial-setup` creates it on first graphical login rather than before), and wheel membership could change later regardless. The script scans `/etc/passwd` directly for local (genuinely-local, since domain users are resolved through NSS and are never lines in that file) `UID >= 1000` entries in the `wheel` group, writes the resulting comma-separated list to `custom.conf` via `configparser` (idempotently — skips the write and the `accounts-daemon` restart entirely if the computed list hasn't changed since last boot), and restarts `accounts-daemon.service` so the change takes effect immediately rather than on the next natural restart.
+
+### Sysadmins PolicyKit Admin Rule
+
+The FreeIPA `sysadmins` group is granted sudo through a FreeIPA sudo rule configured on the IPA server itself — outside this repo's scope. That covers terminal `sudo` only; PolicyKit-mediated privilege escalation (GNOME Settings, gnome-software, gnome-disks, anything invoked via `pkexec`/polkit rather than a shell) is a separate authorization path that ignores sudo/wheel membership entirely and, absent any admin-identity rule, recognizes only the local `wheel` group as admin.
+
+`build.sh` installs `polkit-sysadmins-admin.rules` to `/etc/polkit-1/rules.d/49-sysadmins-admin.rules`, following [FreeIPA's PolicyKit howto](https://www.freeipa.org/page/Howto/FreeIPA_PolicyKit.html): a polkit JS rule registered via `polkit.addAdminRule()` that returns `["unix-group:sysadmins", "unix-group:wheel"]`. `unix-group:sysadmins` resolves through sssd/NSS the same way any other unix group does — IPA group membership needs no special-casing here, it's just a `getgrnam()` call as far as polkit is concerned — which is what makes `sysadmins` members valid admin identities for GNOME's own polkit authentication prompts specifically, not just a CLI `sudo`. `unix-group:wheel` stays in the returned list alongside it (not replaced) so this image's one local sudo/wheel fallback account (see GDM exclusion above) keeps working the same way, e.g. before a machine is domain-joined.
 
 ### Chromebook SoundWire/SOF Audio Support
 

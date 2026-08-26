@@ -98,6 +98,12 @@ This image applies that step automatically, for whichever user is currently logg
 
 The unit runs `/usr/libexec/tailscale-set-operator` via a narrowly-scoped `sudoers.d` NOPASSWD rule. That script takes no arguments — it always sets the operator to whichever user invoked it (read from `SUDO_USER`, which `sudo` always sets) — so a user can only ever make *themselves* the operator, never another account. If `tailscale` isn't installed, the unit is a no-op.
 
+## Sysadmins PolicyKit Admin Rule
+
+The `sysadmins` FreeIPA group is expected to already have sudo through a FreeIPA sudo rule (configured on the IPA server, outside this repo). Sudo alone doesn't cover privilege escalation through PolicyKit, though — GNOME Settings, gnome-software, gnome-disks, and anything else that asks for admin credentials via `pkexec`/polkit rather than a terminal `sudo` invocation. By default, polkit only treats the local `wheel` group as an admin identity, so a `sysadmins` member would still hit an authentication prompt they can't satisfy, despite already having sudo.
+
+This image ships a polkit JS rule (`/etc/polkit-1/rules.d/49-sysadmins-admin.rules`) that adds `unix-group:sysadmins` as an admin identity too, following [FreeIPA's PolicyKit howto](https://www.freeipa.org/page/Howto/FreeIPA_PolicyKit.html). Group membership resolves through sssd/NSS the same way any other unix group does, so this covers the GNOME environment's own admin prompts — Settings, Software, Disks, and any other polkit-mediated action — for any `sysadmins` member, with no per-machine setup. `unix-group:wheel` is kept alongside it (not replaced), so this image's one local sudo/wheel fallback account still works the same way, e.g. before a machine is domain-joined.
+
 ---
 
 # FreeIPA Join Persistence
