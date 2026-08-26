@@ -1,0 +1,18 @@
+[Unit]
+Description=Install this image's Firefox policy for the Firefox Flatpak
+Documentation=file:///usr/libexec/firefox-flatpak-policy-install.sh
+# Not gated to first-boot-only: the Firefox Flatpak's own system install
+# may not have happened yet by first boot on every ISO variant, and
+# /var/lib/flatpak (where its systemconfig extension directory lives)
+# isn't seeded from the image at build time the way ordinary /var
+# content is - see firefox-flatpak-policy-install.sh. Runs on every
+# boot instead, idempotently, until Firefox shows up as an installed
+# system Flatpak.
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/firefox-flatpak-policy-install.sh
+
+[Install]
+WantedBy=multi-user.target
