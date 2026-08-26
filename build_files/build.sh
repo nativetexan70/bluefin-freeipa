@@ -28,6 +28,22 @@ set -ouex pipefail
 # rather than assumed present.
 # powertop provides the --auto-tune power-saving profile applied at boot
 # by powertop-autotune.service (see below).
+# thermald is Intel's own thermal daemon; on 12th-gen ("Alder Lake") hybrid
+# P-core/E-core laptop hardware — this image's primary target, see
+# CLAUDE.md — it reads the platform's Intel DPTF thermal tables and
+# proactively throttles before the kernel's own emergency thermal shutdown
+# has to step in, which otherwise tends to show up as abrupt, coarse
+# frequency cliffs under sustained load rather than the smoother ramp
+# thermald manages.
+# libva-intel-media-driver provides the "iHD" VA-API backend for Intel's
+# Gen9+ (which includes Alder Lake's Xe-LP) integrated graphics, giving
+# hardware video encode/decode instead of a software fallback — see the
+# LIBVA_DRIVER_NAME default and enable_guc=3/HuC note below for why both
+# pieces are needed together. Note the package name: upstream/RPM Fusion
+# call it "intel-media-driver", but Fedora's own (MIT-licensed, patent-
+# unencumbered) build of the same driver ships it as "libva-intel-media-
+# driver" (source package intel-media-driver-free) — "intel-media-driver"
+# itself resolves to nothing in this image's enabled repos.
 # acl provides setfacl/getfacl, used by homebrew-install.sh's first-boot
 # Homebrew install to set a default ACL on the shared Homebrew prefix -
 # needed so newly created Cellar/etc. entries stay group-writable for
@@ -49,6 +65,8 @@ dnf5 install -y --allowerasing \
     fedora-logos \
     "f${_fedora_ver}-backgrounds-gnome" \
     powertop \
+    thermald \
+    libva-intel-media-driver \
     zstd
 
 ### Preserve FreeIPA join state across bootc updates
@@ -382,6 +400,42 @@ install -Dm644 /ctx/96-mmc-storage.conf \
 install -Dm644 /ctx/powertop-autotune.service \
     /usr/lib/systemd/system/powertop-autotune.service
 systemctl enable powertop-autotune.service
+
+### 12th-gen Intel ("Alder Lake") laptop power management and graphics
+#
+# This image's primary target is a 12th-gen Intel Lenovo laptop (see
+# CLAUDE.md), so the pieces below are tuned for that hybrid P-core/E-core
+# CPU and its Xe-LP integrated GPU specifically, on top of the
+# hardware-agnostic PowerTOP auto-tune above.
+
+# thermald: Intel's own thermal daemon, reading DPTF thermal tables to
+# throttle proactively rather than relying solely on the kernel's coarser
+# emergency thermal cutoffs. See the package comment above for why this
+# matters more on Alder Lake's hybrid core layout than on older,
+# homogeneous-core Intel CPUs.
+systemctl enable thermald.service
+
+# i915 GuC/HuC submission + framebuffer compression: see
+# i915-power.conf for the full rationale (including why PSR is
+# deliberately left alone).
+install -Dm644 /ctx/i915-power.conf \
+    /etc/modprobe.d/i915-power.conf
+
+# Default VA-API to libva-intel-media-driver's "iHD" backend rather than relying
+# on libva's own runtime auto-detection, which resolves the driver name
+# from the bound kernel driver and can land on the legacy i965 backend
+# instead of iHD depending on exactly which VA-API packages a given
+# Bluefin base image build happens to carry — pinning it here removes that
+# ambiguity, the same "force it explicitly rather than trust an
+# environment-dependent default" reasoning already applied to enable_guc
+# above and to the ostree dracut module elsewhere in this script. iHD is
+# what actually exercises the hardware encode/decode path that enable_guc's
+# HuC bit (above) loads firmware for; without both pieces together, video
+# playback/encode falls back to software and costs far more battery.
+install -dm755 /etc/environment.d
+cat > /etc/environment.d/10-intel-vaapi.conf << 'ENVEOF'
+LIBVA_DRIVER_NAME=iHD
+ENVEOF
 
 ### Enable required system units
 
