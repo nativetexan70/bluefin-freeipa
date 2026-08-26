@@ -325,6 +325,28 @@ install -Dm644 /ctx/hide-local-admins-gdm.service \
     /usr/lib/systemd/system/hide-local-admins-gdm.service
 systemctl enable hide-local-admins-gdm.service
 
+### Grant the FreeIPA "sysadmins" group PolicyKit admin authority
+#
+# The "sysadmins" IPA group already gets sudo through a FreeIPA sudo rule
+# (configured server-side, on the IPA server itself - not this image).
+# That covers terminal `sudo` invocations only; it does nothing for
+# PolicyKit-mediated privilege escalation, which is how GNOME Settings,
+# gnome-software, gnome-disks, and anything else driven through
+# pkexec/polkit asks for admin credentials. Without a rule telling
+# PolicyKit about it, "sysadmins" membership is invisible to polkit,
+# which only recognizes the local wheel group as admin by default - so a
+# sysadmins member with full sudo would still be treated as an
+# unprivileged user by every polkit authentication dialog, GNOME's
+# included.
+#
+# Follows https://www.freeipa.org/page/Howto/FreeIPA_PolicyKit.html: a JS
+# rule registered via polkit.addAdminRule() naming the group as
+# "unix-group:sysadmins", resolved through sssd/NSS the same as any other
+# unix group, IPA or local. See polkit-sysadmins-admin.rules for why
+# unix-group:wheel stays alongside it rather than being replaced.
+install -Dm644 /ctx/polkit-sysadmins-admin.rules \
+    /etc/polkit-1/rules.d/49-sysadmins-admin.rules
+
 ### Let every user run Tailscale/trayscale without a manual sudo step
 #
 # By default only root can control tailscaled, so trayscale (which has no

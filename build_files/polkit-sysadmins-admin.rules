@@ -1,0 +1,22 @@
+// Grant PolicyKit administrator authority to the FreeIPA "sysadmins" group.
+//
+// See: https://www.freeipa.org/page/Howto/FreeIPA_PolicyKit.html
+//
+// PolicyKit falls back to a hardcoded default of unix-group:wheel for its
+// "admin" identities - the accounts whose credentials satisfy an
+// auth_admin action, i.e. the ones that can answer the authentication
+// prompt raised by GNOME Settings, gnome-software, gnome-disks, and any
+// other polkit-mediated privileged action (GUI or pkexec alike). This
+// rule adds the FreeIPA "sysadmins" group as an admin identity too, the
+// same way any unix-group: identity is resolved - through sssd/NSS, no
+// different from a local group - so any member can answer those prompts
+// with their own domain credentials without needing local wheel
+// membership.
+//
+// unix-group:wheel is kept alongside it, not replaced, so this image's
+// one local fallback account (already sudo/wheel - see
+// hide-local-admins-gdm.py) still works for polkit-mediated admin
+// actions too, e.g. before a machine is domain-joined.
+polkit.addAdminRule(function(action, subject) {
+    return ["unix-group:sysadmins", "unix-group:wheel"];
+});
