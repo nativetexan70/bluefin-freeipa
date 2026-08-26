@@ -11,6 +11,15 @@ flatpak remote-add --if-not-exists --system flathub https://flathub.org/repo/fla
 # Install Trayscale (Tailscale GUI client) system-wide.
 flatpak install --system --noninteractive flathub dev.deedles.Trayscale
 
+# Install additional system-wide apps.
+flatpak install --system --noninteractive flathub org.onlyoffice.desktopeditors
+flatpak install --system --noninteractive flathub org.gimp.GIMP
+flatpak install --system --noninteractive flathub org.inkscape.Inkscape
+flatpak install --system --noninteractive flathub org.gnome.Shotwell
+flatpak install --system --noninteractive flathub org.shotcut.Shotcut
+flatpak install --system --noninteractive flathub io.github.peazip.PeaZip
+flatpak install --system --noninteractive flathub io.github.v81d.Wattage
+
 # Enable background Flatpak update timer for all users.
 systemctl --global enable flatpak-user-update.timer || true
 %end
